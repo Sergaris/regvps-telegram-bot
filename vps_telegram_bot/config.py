@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 _DEFAULT_API_BASE = "https://api.cloudvps.reg.ru/v1"
 _ENV_KEY_API_BASE = "REGRU_CLOUDVPS_API_BASE"
@@ -9,6 +10,18 @@ _ENV_KEY_TOKEN = "REGRU_CLOUDVPS_TOKEN"
 _ENV_KEY_REGLET = "REGRU_REGLET_ID"
 _ENV_KEY_TG = "TELEGRAM_BOT_TOKEN"
 _ENV_KEY_USER_IDS = "TELEGRAM_ALLOWED_USER_IDS"
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
+class McopsRemoteSettings:
+    """SSH-доступ к хосту Minecraft для вызова ``mcops`` CLI."""
+
+    host: str
+    user: str
+    identity_file: str
+    port: int
+    remote_cwd: str
+    remote_python: str
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -21,6 +34,7 @@ class AppSettings:
     telegram_bot_token: str
     allowed_telegram_user_ids: frozenset[int]
     request_timeout_sec: float
+    mcops_remote: McopsRemoteSettings | None
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -74,6 +88,41 @@ def _parse_allowlist_csv(raw: str) -> frozenset[int]:
     return frozenset(out)
 
 
+def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
+    """Разобрать SSH-настройки для ``mcops`` или вернуть ``None``."""
+
+    host = (env.get("MCOPS_SSH_HOST") or "").strip()
+    if not host:
+        return None
+    user = (env.get("MCOPS_SSH_USER") or "").strip()
+    identity = (env.get("MCOPS_SSH_IDENTITY_FILE") or "").strip()
+    if not user or not identity:
+        msg = "MCOPS_SSH_HOST set but MCOPS_SSH_USER or MCOPS_SSH_IDENTITY_FILE is empty"
+        raise ValueError(msg)
+    path = Path(identity).expanduser()
+    if not path.is_file():
+        msg = f"MCOPS_SSH_IDENTITY_FILE is not a file: {path}"
+        raise ValueError(msg)
+    port_raw = (env.get("MCOPS_SSH_PORT") or "22").strip()
+    if not port_raw.isdecimal():
+        msg = "MCOPS_SSH_PORT must be a positive integer"
+        raise ValueError(msg)
+    port = int(port_raw)
+    if port <= 0:
+        msg = "MCOPS_SSH_PORT must be a positive integer"
+        raise ValueError(msg)
+    cwd = (env.get("MCOPS_SSH_REMOTE_CWD") or "/opt/minecraft/ops").strip()
+    py = (env.get("MCOPS_SSH_REMOTE_PYTHON") or "python3").strip()
+    return McopsRemoteSettings(
+        host=host,
+        user=user,
+        identity_file=str(path),
+        port=port,
+        remote_cwd=cwd,
+        remote_python=py,
+    )
+
+
 def from_environ(overrides: dict[str, str] | None = None) -> AppSettings:
     """Собрать `AppSettings` с валидацией.
 
@@ -114,6 +163,8 @@ def from_environ(overrides: dict[str, str] | None = None) -> AppSettings:
     base = r.regru_api_base.rstrip("/")
     if not base:
         base = _DEFAULT_API_BASE
+    env_map = dict(overrides or {**os.environ})
+    mcops_remote = _parse_mcops_remote(env_map)
     return AppSettings(
         regru_api_base=base,
         regru_token=r.regru_token,
@@ -121,4 +172,5 @@ def from_environ(overrides: dict[str, str] | None = None) -> AppSettings:
         telegram_bot_token=r.telegram_bot_token,
         allowed_telegram_user_ids=allowed,
         request_timeout_sec=request_timeout,
+        mcops_remote=mcops_remote,
     )

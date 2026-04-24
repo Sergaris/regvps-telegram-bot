@@ -4,9 +4,10 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, Defaults
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, Defaults
 
 from vps_telegram_bot.config import AppSettings
+from vps_telegram_bot.minecraft_handlers import register_minecraft_handlers
 from vps_telegram_bot.reglet_brief import format_reglet_telegram
 from vps_telegram_bot.regru_client import (
     RegletAction,
@@ -151,8 +152,8 @@ def build_application(settings: AppSettings, regru: RegRuClient) -> Application:
 
 def _handler_list(
     settings: AppSettings,
-) -> list[CommandHandler]:
-    return [
+) -> list[CommandHandler | CallbackQueryHandler]:
+    base: list[CommandHandler | CallbackQueryHandler] = [
         CommandHandler("start", _help_text_handler(settings), block=False),
         CommandHandler("vps", _vps_command_handler(settings), block=False),
         CommandHandler("vps_info", _vps_info_handler(settings), block=False),
@@ -161,6 +162,8 @@ def _handler_list(
         CommandHandler("vps_stop", _wrap(RegletAction.STOP), block=False),
         CommandHandler("vps_reboot", _wrap(RegletAction.REBOOT), block=False),
     ]
+    base.extend(register_minecraft_handlers(settings))
+    return base
 
 
 def _post_shutdown_regru(regru: RegRuClient) -> Callable[[Application], Awaitable[None]]:
@@ -205,6 +208,10 @@ def _vps_command_handler(
 def _long_help_ru() -> str:
     return (
         "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, /vps_stop, /vps_reboot.\n"
+        "Minecraft (через SSH mcops, если заданы MCOPS_SSH_*): "
+        "/mc_status, /mc_start, /mc_stop, /mc_restart, /mc_players, /mc_backups, "
+        "/mc_backup_manual <manual-1|2|3>.\n"
+        "Стек: /stack_status, /stack_start, /stack_stop.\n"
         "Команда /vps — список. Не кладите бота на тот же VPS, которым он управляет."
     )
 
@@ -212,5 +219,6 @@ def _long_help_ru() -> str:
 def _vps_list_ru() -> str:
     return (
         "VPS: /vps_info, /vps_balance, /vps_start, /vps_stop, /vps_reboot. "
+        "Minecraft: /mc_* и стек /stack_* (нужен SSH mcops). "
         "Операция старт/стоп/ребут в панели иногда длится до минуты."
     )

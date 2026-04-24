@@ -30,6 +30,12 @@ pip install -e ".[dev]"
 | `TELEGRAM_ALLOWED_USER_IDS` | Разрешённые id пользователей Telegram, через запятую (только эти увидят команды). |
 | `REGRU_CLOUDVPS_API_BASE` | Опционально, по умолчанию `https://api.cloudvps.reg.ru/v1`. |
 | `HTTP_REQUEST_TIMEOUT_SEC` | Опционально, таймаут HTTP к панели (сек), по умолчанию `30`. |
+| `MCOPS_SSH_HOST` | Опционально: хост Minecraft для вызова `mcops` по SSH (`/mc_*`, `/stack_*`). |
+| `MCOPS_SSH_USER` | SSH-пользователь на хосте Minecraft (обязателен, если задан `MCOPS_SSH_HOST`). |
+| `MCOPS_SSH_IDENTITY_FILE` | Путь к **приватному** ключу SSH (файл должен существовать). |
+| `MCOPS_SSH_PORT` | Опционально, по умолчанию `22`. |
+| `MCOPS_SSH_REMOTE_CWD` | Опционально, каталог репо ops на сервере, по умолчанию `/opt/minecraft/ops`. |
+| `MCOPS_SSH_REMOTE_PYTHON` | Опционально, интерпретатор на сервере, по умолчанию `python3`. |
 
 Свой `user_id` в Telegram удобно посмотреть, у `@userinfobot` или в логе бота при тесте (сначала allowlist, потом смотрите, кто пишет).
 
@@ -45,6 +51,15 @@ pip install -e ".[dev]"
 - `/vps_start` — `type: start`
 - `/vps_stop` — `type: stop`
 - `/vps_reboot` — `type: reboot`
+
+Если заданы `MCOPS_SSH_*`, бот дополнительно может дергать `mcops` на хосте Minecraft по SSH:
+
+- `/mc_status`, `/mc_start`, `/mc_stop`, `/mc_restart`, `/mc_players`
+- `/mc_backups` — список и кнопки для подтверждённого `backup restore`
+- `/mc_backup_manual manual-1|manual-2|manual-3` — ручной tar-слот
+- `/stack_status`, `/stack_start`, `/stack_stop` — VPS + Minecraft вместе
+
+Автоматический мониторинг баланса Reg.ru и отсчёт выключения по низкому балансу должны жить **на самой VPS** (`mcops watchdog tick` + systemd timer в `minecraft-server-ops`), а не в боте.
 
 ## Запуск
 
