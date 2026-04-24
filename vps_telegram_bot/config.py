@@ -22,6 +22,8 @@ class McopsRemoteSettings:
     port: int
     remote_cwd: str
     remote_python: str
+    timeout_sec: float
+    command_timeout_sec: float
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -99,7 +101,7 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
     if not user or not identity:
         msg = "MCOPS_SSH_HOST set but MCOPS_SSH_USER or MCOPS_SSH_IDENTITY_FILE is empty"
         raise ValueError(msg)
-    path = Path(identity).expanduser()
+    path = Path(os.path.expandvars(identity)).expanduser()
     if not path.is_file():
         msg = f"MCOPS_SSH_IDENTITY_FILE is not a file: {path}"
         raise ValueError(msg)
@@ -113,6 +115,16 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
         raise ValueError(msg)
     cwd = (env.get("MCOPS_SSH_REMOTE_CWD") or "/opt/minecraft/ops").strip()
     py = (env.get("MCOPS_SSH_REMOTE_PYTHON") or "python3").strip()
+    timeout_raw = (env.get("MCOPS_SSH_TIMEOUT_SEC") or "60").strip()
+    timeout = float(timeout_raw)
+    if timeout <= 0:
+        msg = "MCOPS_SSH_TIMEOUT_SEC must be a positive number"
+        raise ValueError(msg)
+    command_timeout_raw = (env.get("MCOPS_SSH_COMMAND_TIMEOUT_SEC") or "3600").strip()
+    command_timeout = float(command_timeout_raw)
+    if command_timeout <= 0:
+        msg = "MCOPS_SSH_COMMAND_TIMEOUT_SEC must be a positive number"
+        raise ValueError(msg)
     return McopsRemoteSettings(
         host=host,
         user=user,
@@ -120,6 +132,8 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
         port=port,
         remote_cwd=cwd,
         remote_python=py,
+        timeout_sec=timeout,
+        command_timeout_sec=command_timeout,
     )
 
 

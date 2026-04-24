@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -19,9 +20,9 @@ log = logging.getLogger(__name__)
 
 _BACKUP_CATALOG_KEY = "mcops_backup_catalog"
 _ACCESS_DENIED_RU = "Нет доступа. Этот бот только для списка доверенных."
-_CALLBACK_PICK = re.compile(r"^mcs:(\d+)$")
-_CALLBACK_GO = re.compile(r"^mcy:(\d+)$")
-_CALLBACK_NO = re.compile(r"^mcn:(\d+)$")
+_CALLBACK_PICK = re.compile(r"^mcs:([A-Za-z0-9_-]+):(\d+)$")
+_CALLBACK_GO = re.compile(r"^mcy:([A-Za-z0-9_-]+):(\d+)$")
+_CALLBACK_NO = re.compile(r"^mcn:([A-Za-z0-9_-]+):(\d+)$")
 
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
@@ -74,9 +75,18 @@ def register_minecraft_handlers(
         CommandHandler("stack_status", _stack_status_handler(settings), block=False),
         CommandHandler("stack_start", _stack_start_handler(settings), block=False),
         CommandHandler("stack_stop", _stack_stop_handler(settings), block=False),
-        CallbackQueryHandler(_minecraft_callback_router(settings), pattern=r"^mcs:\d+$"),
-        CallbackQueryHandler(_minecraft_callback_router(settings), pattern=r"^mcy:\d+$"),
-        CallbackQueryHandler(_minecraft_callback_router(settings), pattern=r"^mcn:\d+$"),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mcs:[A-Za-z0-9_-]+:\d+$",
+        ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mcy:[A-Za-z0-9_-]+:\d+$",
+        ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mcn:[A-Za-z0-9_-]+:\d+$",
+        ),
     ]
 
 
@@ -112,6 +122,9 @@ def _mc_service_handler(settings: AppSettings, action: str) -> Handler:
         remote = _require_remote(settings)
         if remote is None:
             await msg.reply_text("SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).")
+            return
+        if action in {"stop", "restart"} and (context.args or []) != ["confirm"]:
+            await msg.reply_text(f"Подтвердите действие: /mc_{action} confirm")
             return
         await msg.reply_text(f"Minecraft: отправляю systemctl {action}…")
         code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
@@ -163,15 +176,18 @@ def _mc_backups_handler(settings: AppSettings) -> Handler:
             return
         catalog: list[tuple[str, str]] = []
         buttons: list[list[InlineKeyboardButton]] = []
+        token = secrets.token_urlsafe(6)
         for idx, row in enumerate(rows[:20]):
             eid = str(row.get("id") or "")
             label = str(row.get("label") or eid)[:40]
             if not eid:
                 continue
             catalog.append((eid, label))
-            buttons.append([InlineKeyboardButton(f"↩ {label}", callback_data=f"mcs:{idx}")])
+            buttons.append(
+                [InlineKeyboardButton(f"↩ {label}", callback_data=f"mcs:{token}:{idx}")]
+            )
         uid = u.id if u else 0
-        context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[uid] = catalog
+        context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
         await msg.reply_text(
             "Последние бэкапы. Нажмите для подтверждения отката:",
             reply_markup=InlineKeyboardMarkup(buttons),
@@ -222,14 +238,15 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             await q.answer("SSH не настроен.", show_alert=True)
             return
         uid = u.id
-        catalog_map: dict[int, list[tuple[str, str]]] = context.application.bot_data.get(
+        catalog_map: dict[str, list[tuple[str, str]]] = context.application.bot_data.get(
             _BACKUP_CATALOG_KEY,
             {},
         )
-        catalog = catalog_map.get(uid, [])
 
         if (m := _CALLBACK_PICK.match(q.data)) is not None:
-            idx = int(m.group(1))
+            token = m.group(1)
+            idx = int(m.group(2))
+            catalog = catalog_map.get(f"{uid}:{token}", [])
             if idx < 0 or idx >= len(catalog):
                 await q.answer("Список устарел. Обновите /mc_backups.", show_alert=True)
                 return
@@ -237,8 +254,8 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             kb = InlineKeyboardMarkup(
                 [
                     [
-                        InlineKeyboardButton("Да, откатить", callback_data=f"mcy:{idx}"),
-                        InlineKeyboardButton("Отмена", callback_data=f"mcn:{idx}"),
+                        InlineKeyboardButton("Да, откатить", callback_data=f"mcy:{token}:{idx}"),
+                        InlineKeyboardButton("Отмена", callback_data=f"mcn:{token}:{idx}"),
                     ]
                 ]
             )
@@ -255,7 +272,9 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             return
 
         if (m := _CALLBACK_GO.match(q.data)) is not None:
-            idx = int(m.group(1))
+            token = m.group(1)
+            idx = int(m.group(2))
+            catalog = catalog_map.get(f"{uid}:{token}", [])
             if idx < 0 or idx >= len(catalog):
                 await q.answer("Список устарел.", show_alert=True)
                 return
@@ -375,6 +394,9 @@ def _stack_stop_handler(settings: AppSettings) -> Handler:
         if remote is None:
             await msg.reply_text("SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).")
             return
+        if (context.args or []) != ["confirm"]:
+            await msg.reply_text("Подтвердите остановку всего стека: /stack_stop confirm")
+            return
         regru = context.application.bot_data.get("regru")
         if not isinstance(regru, RegRuClient):
             await msg.reply_text("Внутренняя ошибка: нет RegRuClient.")
@@ -383,6 +405,27 @@ def _stack_stop_handler(settings: AppSettings) -> Handler:
         code, out, err = await run_remote_mcops(remote, ["service", "stop", "--local"])
         tail = (out + "\n" + err).strip()[:2000]
         await msg.reply_text(f"Minecraft stop: код {code}\n{tail}")
+        if code != 0:
+            await msg.reply_text("VPS не останавливаю: Minecraft stop завершился с ошибкой.")
+            return
+        status_code, status_out, status_err = await run_remote_mcops(remote, ["status", "--json"])
+        if status_code != 0:
+            await msg.reply_text(
+                "VPS не останавливаю: не удалось проверить статус Minecraft после stop.\n"
+                f"{(status_err or status_out)[:1500]}"
+            )
+            return
+        try:
+            status_root = json.loads(status_out)
+        except json.JSONDecodeError:
+            await msg.reply_text("VPS не останавливаю: mcops status вернул не-JSON.")
+            return
+        if status_root.get("phase") != "stopped":
+            await msg.reply_text(
+                "VPS не останавливаю: Minecraft не выглядит остановленным "
+                f"(phase={status_root.get('phase')})."
+            )
+            return
         await msg.reply_text("Запрос на остановку VPS…")
         try:
             await regru.post_reglet_action(RegletAction.STOP)

@@ -40,6 +40,8 @@ async def run_remote_mcops(remote: McopsRemoteSettings, argv: list[str]) -> tupl
         "-o",
         "BatchMode=yes",
         "-o",
+        f"ConnectTimeout={max(1, int(remote.timeout_sec))}",
+        "-o",
         "StrictHostKeyChecking=accept-new",
         f"{remote.user}@{remote.host}",
         inner,
@@ -50,7 +52,15 @@ async def run_remote_mcops(remote: McopsRemoteSettings, argv: list[str]) -> tupl
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out_b, err_b = await proc.communicate()
+    try:
+        out_b, err_b = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=remote.command_timeout_sec,
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return 124, "", f"remote mcops timed out after {remote.command_timeout_sec:.0f}s"
     code = int(proc.returncode or 0)
     out = (out_b or b"").decode("utf-8", errors="replace")
     err = (err_b or b"").decode("utf-8", errors="replace")

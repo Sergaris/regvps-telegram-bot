@@ -50,6 +50,9 @@ def _wrap(
         message = update.effective_message
         if message is None:
             return
+        if action in {RegletAction.STOP, RegletAction.REBOOT} and context.args != ["confirm"]:
+            await message.reply_text(f"Подтвердите действие: /vps_{action.value} confirm")
+            return
         regru = _reg_client(context)
         try:
             text = await regru.post_reglet_action(action)
@@ -207,18 +210,20 @@ def _vps_command_handler(
 
 def _long_help_ru() -> str:
     return (
-        "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, /vps_stop, /vps_reboot.\n"
+        "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, "
+        "/vps_stop confirm, /vps_reboot confirm.\n"
         "Minecraft (через SSH mcops, если заданы MCOPS_SSH_*): "
         "/mc_status, /mc_start, /mc_stop, /mc_restart, /mc_players, /mc_backups, "
-        "/mc_backup_manual <manual-1|2|3>.\n"
-        "Стек: /stack_status, /stack_start, /stack_stop.\n"
+        "/mc_backup_manual <manual-1|manual-2|manual-3>.\n"
+        "Стек: /stack_status, /stack_start, /stack_stop confirm.\n"
         "Команда /vps — список. Не кладите бота на тот же VPS, которым он управляет."
     )
 
 
 def _vps_list_ru() -> str:
     return (
-        "VPS: /vps_info, /vps_balance, /vps_start, /vps_stop, /vps_reboot. "
-        "Minecraft: /mc_* и стек /stack_* (нужен SSH mcops). "
+        "VPS: /vps_info, /vps_balance, /vps_start, "
+        "/vps_stop confirm, /vps_reboot confirm. "
+        "Minecraft: /mc_* и стек /stack_* (нужен SSH mcops; stop/restart с confirm). "
         "Операция старт/стоп/ребут в панели иногда длится до минуты."
     )

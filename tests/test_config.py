@@ -72,3 +72,30 @@ def test_from_environ_mcops_ssh_ok(tmp_path: Path) -> None:
     assert s.mcops_remote is not None
     assert s.mcops_remote.host == "example.org"
     assert s.mcops_remote.user == "ops"
+    assert s.mcops_remote.timeout_sec == 60.0
+    assert s.mcops_remote.command_timeout_sec == 3600.0
+
+
+def test_from_environ_mcops_identity_expands_env_var(tmp_path: Path, monkeypatch) -> None:
+    """Windows-style env vars in SSH key path are expanded."""
+
+    key = tmp_path / "minecraft_ops"
+    key.write_text("not-a-real-key", encoding="utf-8")
+    monkeypatch.setenv("MCOPS_KEY_DIR_FOR_TEST", str(tmp_path))
+    s = from_environ(
+        {
+            "REGRU_CLOUDVPS_TOKEN": "a",
+            "REGRU_REGLET_ID": "1",
+            "TELEGRAM_BOT_TOKEN": "b",
+            "TELEGRAM_ALLOWED_USER_IDS": "1",
+            "MCOPS_SSH_HOST": "example.org",
+            "MCOPS_SSH_USER": "ops",
+            "MCOPS_SSH_IDENTITY_FILE": "%MCOPS_KEY_DIR_FOR_TEST%\\minecraft_ops",
+            "MCOPS_SSH_TIMEOUT_SEC": "12.5",
+            "MCOPS_SSH_COMMAND_TIMEOUT_SEC": "7200",
+        }
+    )
+    assert s.mcops_remote is not None
+    assert s.mcops_remote.identity_file == str(key)
+    assert s.mcops_remote.timeout_sec == 12.5
+    assert s.mcops_remote.command_timeout_sec == 7200.0
