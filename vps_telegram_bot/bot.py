@@ -4,6 +4,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from telegram import Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, Defaults
 
 from vps_telegram_bot.config import AppSettings
@@ -22,6 +23,10 @@ log = logging.getLogger(__name__)
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
 
 _ACCESS_DENIED_RU = "Нет доступа. Этот бот только для списка доверенных."
+_TG_NET_FAIL_RU = (
+    "Не удалось связаться с Telegram (таймаут/сеть). "
+    "Проверьте интернет и прокси (HTTP(S)_PROXY, NO_PROXY) и повторите команду."
+)
 
 
 def _is_allowed(effective_user_id: int, settings: AppSettings) -> bool:
@@ -34,6 +39,27 @@ def _reg_client(context: ContextTypes.DEFAULT_TYPE) -> RegRuClient:
         msg = "bot_data['regru'] is missing or not RegRuClient (internal error)"
         raise RuntimeError(msg)
     return client
+
+
+async def _telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Логировать сбои хендлеров; сетевые ошибки Telegram не роняют процесс.
+
+    Args:
+        update: Объект `Update` или ``None`` (например, при ошибке в job queue).
+        context: Контекст PTB; `context.error` — исключение из хендлера.
+    """
+    err = context.error
+    if isinstance(err, (TimedOut, NetworkError)):
+        log.warning("Telegram request failed: %s", err, exc_info=err)
+        u = update if isinstance(update, Update) else None
+        m = u.effective_message if u is not None else None
+        if m is not None:
+            try:
+                await m.reply_text(_TG_NET_FAIL_RU)
+            except (TimedOut, NetworkError):
+                log.warning("Could not send Telegram network error hint to chat", exc_info=True)
+        return
+    log.exception("Unhandled handler error", exc_info=err)
 
 
 def _wrap(
@@ -143,11 +169,20 @@ def build_application(settings: AppSettings, regru: RegRuClient) -> Application:
         Application.builder()
         .token(settings.telegram_bot_token)
         .defaults(Defaults(allow_sending_without_reply=True))
+        .connect_timeout(settings.telegram_http_connect_timeout_sec)
+        .read_timeout(settings.telegram_http_read_timeout_sec)
+        .write_timeout(settings.telegram_http_write_timeout_sec)
+        .pool_timeout(settings.telegram_http_pool_timeout_sec)
+        .get_updates_connect_timeout(settings.telegram_http_connect_timeout_sec)
+        .get_updates_read_timeout(settings.telegram_http_read_timeout_sec)
+        .get_updates_write_timeout(settings.telegram_http_write_timeout_sec)
+        .get_updates_pool_timeout(settings.telegram_http_pool_timeout_sec)
         .post_shutdown(_post_shutdown_regru(regru))
         .build()
     )
     app.bot_data["settings"] = settings
     app.bot_data["regru"] = regru
+    app.add_error_handler(_telegram_error_handler)
     for h in _handler_list(settings):
         app.add_handler(h)
     return app
@@ -213,7 +248,7 @@ def _long_help_ru() -> str:
         "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, "
         "/vps_stop confirm, /vps_reboot confirm.\n"
         "Minecraft (через SSH mcops, если заданы MCOPS_SSH_*): "
-        "/mc_status, /mc_start, /mc_stop, /mc_restart, /mc_players, /mc_backups, "
+        "/mc_status, /mc_start, /mc_stop confirm, /mc_restart confirm, /mc_players, /mc_backups, "
         "/mc_backup_manual <manual-1|manual-2|manual-3>.\n"
         "Стек: /stack_status, /stack_start, /stack_stop confirm.\n"
         "Команда /vps — список. Не кладите бота на тот же VPS, которым он управляет."

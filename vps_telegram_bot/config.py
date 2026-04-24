@@ -10,6 +10,10 @@ _ENV_KEY_TOKEN = "REGRU_CLOUDVPS_TOKEN"
 _ENV_KEY_REGLET = "REGRU_REGLET_ID"
 _ENV_KEY_TG = "TELEGRAM_BOT_TOKEN"
 _ENV_KEY_USER_IDS = "TELEGRAM_ALLOWED_USER_IDS"
+_ENV_KEY_TG_CONNECT = "TELEGRAM_HTTP_CONNECT_TIMEOUT_SEC"
+_ENV_KEY_TG_READ = "TELEGRAM_HTTP_READ_TIMEOUT_SEC"
+_ENV_KEY_TG_WRITE = "TELEGRAM_HTTP_WRITE_TIMEOUT_SEC"
+_ENV_KEY_TG_POOL = "TELEGRAM_HTTP_POOL_TIMEOUT_SEC"
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
@@ -18,7 +22,8 @@ class McopsRemoteSettings:
 
     host: str
     user: str
-    identity_file: str
+    identity_file: str | None
+    ssh_password: str | None
     port: int
     remote_cwd: str
     remote_python: str
@@ -36,6 +41,10 @@ class AppSettings:
     telegram_bot_token: str
     allowed_telegram_user_ids: frozenset[int]
     request_timeout_sec: float
+    telegram_http_connect_timeout_sec: float
+    telegram_http_read_timeout_sec: float
+    telegram_http_write_timeout_sec: float
+    telegram_http_pool_timeout_sec: float
     mcops_remote: McopsRemoteSettings | None
 
 
@@ -90,6 +99,35 @@ def _parse_allowlist_csv(raw: str) -> frozenset[int]:
     return frozenset(out)
 
 
+def _parse_positive_float(
+    env: dict[str, str],
+    key: str,
+    *,
+    default: float,
+) -> float:
+    """Разобрать положительный float из окружения или вернуть default.
+
+    Args:
+        env: Карта переменных (подмена для тестов или `os.environ`).
+        key: Имя переменной.
+        default: Значение, если переменная не задана или пустая.
+
+    Returns:
+        Положительное число секунд.
+
+    Raises:
+        ValueError: Не число или значение <= 0.
+    """
+    raw = (env.get(key) or "").strip()
+    if not raw:
+        return default
+    value = float(raw)
+    if value <= 0:
+        msg = f"{key} must be a positive number"
+        raise ValueError(msg)
+    return value
+
+
 def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
     """Разобрать SSH-настройки для ``mcops`` или вернуть ``None``."""
 
@@ -98,13 +136,22 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
         return None
     user = (env.get("MCOPS_SSH_USER") or "").strip()
     identity = (env.get("MCOPS_SSH_IDENTITY_FILE") or "").strip()
-    if not user or not identity:
-        msg = "MCOPS_SSH_HOST set but MCOPS_SSH_USER or MCOPS_SSH_IDENTITY_FILE is empty"
+    password = (env.get("MCOPS_SSH_PASSWORD") or "").strip()
+    if not user:
+        msg = "MCOPS_SSH_HOST set but MCOPS_SSH_USER is empty"
         raise ValueError(msg)
-    path = Path(os.path.expandvars(identity)).expanduser()
-    if not path.is_file():
-        msg = f"MCOPS_SSH_IDENTITY_FILE is not a file: {path}"
+    if identity and password:
+        msg = "Set either MCOPS_SSH_IDENTITY_FILE or MCOPS_SSH_PASSWORD, not both"
         raise ValueError(msg)
+    if not identity and not password:
+        msg = "MCOPS_SSH_HOST set but neither MCOPS_SSH_IDENTITY_FILE nor MCOPS_SSH_PASSWORD is set"
+        raise ValueError(msg)
+    path: Path | None = None
+    if identity:
+        path = Path(os.path.expandvars(identity)).expanduser()
+        if not path.is_file():
+            msg = f"MCOPS_SSH_IDENTITY_FILE is not a file: {path}"
+            raise ValueError(msg)
     port_raw = (env.get("MCOPS_SSH_PORT") or "22").strip()
     if not port_raw.isdecimal():
         msg = "MCOPS_SSH_PORT must be a positive integer"
@@ -128,7 +175,8 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
     return McopsRemoteSettings(
         host=host,
         user=user,
-        identity_file=str(path),
+        identity_file=str(path) if path is not None else None,
+        ssh_password=password if password else None,
         port=port,
         remote_cwd=cwd,
         remote_python=py,
@@ -179,6 +227,26 @@ def from_environ(overrides: dict[str, str] | None = None) -> AppSettings:
         base = _DEFAULT_API_BASE
     env_map = dict(overrides or {**os.environ})
     mcops_remote = _parse_mcops_remote(env_map)
+    tg_connect = _parse_positive_float(
+        env_map,
+        _ENV_KEY_TG_CONNECT,
+        default=30.0,
+    )
+    tg_read = _parse_positive_float(
+        env_map,
+        _ENV_KEY_TG_READ,
+        default=60.0,
+    )
+    tg_write = _parse_positive_float(
+        env_map,
+        _ENV_KEY_TG_WRITE,
+        default=30.0,
+    )
+    tg_pool = _parse_positive_float(
+        env_map,
+        _ENV_KEY_TG_POOL,
+        default=20.0,
+    )
     return AppSettings(
         regru_api_base=base,
         regru_token=r.regru_token,
@@ -186,5 +254,9 @@ def from_environ(overrides: dict[str, str] | None = None) -> AppSettings:
         telegram_bot_token=r.telegram_bot_token,
         allowed_telegram_user_ids=allowed,
         request_timeout_sec=request_timeout,
+        telegram_http_connect_timeout_sec=tg_connect,
+        telegram_http_read_timeout_sec=tg_read,
+        telegram_http_write_timeout_sec=tg_write,
+        telegram_http_pool_timeout_sec=tg_pool,
         mcops_remote=mcops_remote,
     )

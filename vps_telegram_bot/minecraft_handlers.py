@@ -183,9 +183,7 @@ def _mc_backups_handler(settings: AppSettings) -> Handler:
             if not eid:
                 continue
             catalog.append((eid, label))
-            buttons.append(
-                [InlineKeyboardButton(f"↩ {label}", callback_data=f"mcs:{token}:{idx}")]
-            )
+            buttons.append([InlineKeyboardButton(f"↩ {label}", callback_data=f"mcs:{token}:{idx}")])
         uid = u.id if u else 0
         context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
         await msg.reply_text(

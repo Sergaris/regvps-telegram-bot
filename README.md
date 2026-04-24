@@ -30,9 +30,14 @@ pip install -e ".[dev]"
 | `TELEGRAM_ALLOWED_USER_IDS` | Разрешённые id пользователей Telegram, через запятую (только эти увидят команды). |
 | `REGRU_CLOUDVPS_API_BASE` | Опционально, по умолчанию `https://api.cloudvps.reg.ru/v1`. |
 | `HTTP_REQUEST_TIMEOUT_SEC` | Опционально, таймаут HTTP к панели (сек), по умолчанию `30`. |
+| `TELEGRAM_HTTP_CONNECT_TIMEOUT_SEC` | Опционально, connect-timeout HTTPX к `api.telegram.org` (сек), по умолчанию `30`. |
+| `TELEGRAM_HTTP_READ_TIMEOUT_SEC` | Опционально, read-timeout для обычных запросов бота (сек), по умолчанию `60`. |
+| `TELEGRAM_HTTP_WRITE_TIMEOUT_SEC` | Опционально, write-timeout (сек), по умолчанию `30`. |
+| `TELEGRAM_HTTP_POOL_TIMEOUT_SEC` | Опционально, pool-timeout (сек), по умолчанию `20`. |
 | `MCOPS_SSH_HOST` | Опционально: хост Minecraft для вызова `mcops` по SSH (`/mc_*`, `/stack_*`). |
 | `MCOPS_SSH_USER` | SSH-пользователь на хосте Minecraft (обязателен, если задан `MCOPS_SSH_HOST`). |
 | `MCOPS_SSH_IDENTITY_FILE` | Путь к **приватному** ключу SSH (файл должен существовать). |
+| `MCOPS_SSH_PASSWORD` | Альтернатива ключу: пароль SSH (в env, не в репозиторий). Задайте **либо** ключ, **либо** пароль, не оба. |
 | `MCOPS_SSH_PORT` | Опционально, по умолчанию `22`. |
 | `MCOPS_SSH_REMOTE_CWD` | Опционально, каталог репо ops на сервере, по умолчанию `/opt/minecraft/ops`. |
 | `MCOPS_SSH_REMOTE_PYTHON` | Опционально, интерпретатор на сервере, по умолчанию `python3`. |
@@ -44,6 +49,8 @@ pip install -e ".[dev]"
 Скопируйте [`.env.example`](.env.example) в `.env` и не коммитьте `.env`.
 
 При запуске `python -m vps_telegram_bot` корневой файл `.env` **подхватывается** (`python-dotenv`, настройка `override=False`): переменные из файла добавляют недостающие ключи, **но не** перезаписывают уже заданные в системе или в оболочке (удобно для prod: секреты в `Environment=`, для локалки — всё в `.env`).
+
+Если в логах видно `httpx`/`http_proxy` и таймауты на TLS к Telegram, проверьте корпоративный прокси: либо настройте его до рабочего `api.telegram.org`, либо добавьте хост в `NO_PROXY` / отключите прокси для процесса бота.
 
 ## Команды в чате
 
