@@ -2,6 +2,7 @@
 
 from vps_telegram_bot.minecraft_handlers import (
     _manual_slot_labels,
+    _world_reset_argv_for_telegram,
     admin_menu_markup,
     minecraft_menu_markup,
 )
@@ -68,4 +69,33 @@ def test_admin_menu_markup_mods_row_third_after_balance() -> None:
     assert rows[0] == ["adm:vps_status", "adm:mc_status"]
     assert rows[1] == ["adm:vps_balance"]
     assert rows[2] == ["adm:mods_plan", "adm:confirm_mods_apply"]
-    assert rows[3] == ["nav:home"]
+    assert rows[3] == ["adm:backup_delete_menu"]
+    assert rows[4] == ["adm:world_regen_menu"]
+    assert rows[5] == ["nav:home"]
+
+
+def test_world_reset_argv_random_vs_fixed() -> None:
+    """Пустой seed → только флаг --level-seed; непустой → значение для mcops."""
+
+    assert _world_reset_argv_for_telegram(seed=None) == [
+        "world",
+        "reset",
+        "--no-backup",
+        "--local",
+        "--level-seed",
+    ]
+    assert _world_reset_argv_for_telegram(seed="") == [
+        "world",
+        "reset",
+        "--no-backup",
+        "--local",
+        "--level-seed",
+    ]
+    assert _world_reset_argv_for_telegram(seed=" 42 ") == [
+        "world",
+        "reset",
+        "--no-backup",
+        "--local",
+        "--level-seed",
+        "42",
+    ]

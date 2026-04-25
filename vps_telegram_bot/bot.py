@@ -14,6 +14,9 @@ from vps_telegram_bot.minecraft_handlers import (
     admin_panel_run_mods_apply,
     admin_panel_run_mods_plan,
     admin_panel_show_mods_apply_confirm,
+    admin_world_regen_execute,
+    admin_world_regen_show_final_confirm,
+    admin_world_regen_show_intro,
     minecraft_menu_markup,
     register_minecraft_handlers,
 )
@@ -427,6 +430,33 @@ async def _handle_admin_button(
             return
         await admin_backup_delete_show_catalog(q, context, remote)
         return
+    if data == "adm:world_regen_menu":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_world_regen_show_intro(q)
+        return
+    if data == "adm:world_regen_confirm":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_world_regen_show_final_confirm(q)
+        return
+    if data == "adm:world_regen_do":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_world_regen_execute(q, remote, seed=None)
+        return
 
 
 async def _handle_vps_button(
@@ -587,7 +617,8 @@ def _start_brief_ru() -> str:
         "• VPS — виртуалка в Reg.ru: запуск, стоп, перезапуск.\n"
         "• Minecraft — по SSH: перезапуск сервиса, бэкапы, ручной бэкап.\n"
         "• Админская чепуха — статусы VPS и Minecraft, баланс, "
-        "проверка и обновление модов Modrinth, выборочное удаление бэкапов.\n"
+        "проверка и обновление модов Modrinth, выборочное удаление бэкапов, "
+        "перегенерация мира.\n"
         "\n"
         "Полный список команд: /help. Кратко по командам VPS: /vps.\n"
         "Не запускайте бота на той же машине, которой он управляет — иначе после stop "
@@ -638,6 +669,9 @@ def _full_help_ru(settings: AppSettings) -> str:
             "  После /mc_backups: нажмите бэкап → «Да, откатить» запускает "
             "mcops backup restore … --confirm-destructive на хосте.",
             "/mc_backup_manual manual-1|manual-2|manual-3 — ручной tar-слот (mcops backup create).",
+            "/mc_world_regen — подсказка по перегенерации мира; "
+            "/mc_world_regen confirm — случайный seed (очистка level-seed в server.properties); "
+            "/mc_world_regen confirm <сид> — фиксированный seed. Без tar-бэкапа (--no-backup).",
             "",
             "/stack_status — сводка VPS (/vps_info) и сразу статус Minecraft по SSH.",
             "/stack_start — запуск VPS в панели, ожидание SSH, затем systemctl start Minecraft.",
