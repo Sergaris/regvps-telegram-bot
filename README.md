@@ -67,7 +67,7 @@ pip install -e ".[dev]"
 - `/mc_backups` — список и кнопки для подтверждённого `backup restore`
 - `/mc_backup_manual manual-1|manual-2|manual-3` — ручной tar-слот
 - `/stack_status`, `/stack_start`, `/stack_stop confirm` — VPS + Minecraft вместе
-- Во вкладке **Minecraft** кнопки **«Проверить моды»** и **«Обновить моды»** вызывают на хосте `mcops mods plan --local` и `mcops mods apply --local` (Modrinth); для apply нужно подтверждение в чате. Те же `MCOPS_SSH_*`, что и для остальных `mc_*`.
+- Во вкладке **Админская чепуха** (главное меню) кнопки **«Проверить моды»** и **«Обновить моды»** (ряд под «Баланс VPS») вызывают на хосте `mcops mods plan --local` и `mcops mods apply --local` (Modrinth); для apply нужно подтверждение. Те же `MCOPS_SSH_*`, что и для `mc_*`.
 
 Автоматический мониторинг баланса Reg.ru и отсчёт выключения по низкому балансу должны жить **на самой VPS** (`mcops watchdog tick` + systemd timer в `minecraft-server-ops`), а не в боте.
 

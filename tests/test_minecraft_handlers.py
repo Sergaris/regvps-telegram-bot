@@ -1,6 +1,10 @@
 """Tests for Minecraft Telegram helper formatting."""
 
-from vps_telegram_bot.minecraft_handlers import _manual_slot_labels, minecraft_menu_markup
+from vps_telegram_bot.minecraft_handlers import (
+    _manual_slot_labels,
+    admin_menu_markup,
+    minecraft_menu_markup,
+)
 
 
 def test_manual_slot_labels_show_occupied_and_empty_slots() -> None:
@@ -40,13 +44,28 @@ def test_manual_slot_labels_prefer_manual_slot_status_rows() -> None:
     assert labels["manual-3"] == "manual-3: пусто"
 
 
-def test_minecraft_menu_markup_includes_modrinth_callbacks() -> None:
-    """Главное меню Minecraft содержит кнопки плана и подтверждения apply Modrinth."""
+def test_minecraft_menu_markup_matches_compact_layout() -> None:
+    """Вкладка Minecraft: перезапуск, бэкапы, ручной бэкап, назад (без модов)."""
 
     markup = minecraft_menu_markup()
     flat: list[str] = []
     for row in markup.inline_keyboard:
         for btn in row:
             flat.append(str(btn.callback_data))
-    assert "mc:mods_plan" in flat
-    assert "mc:confirm_mods_apply" in flat
+    assert flat == [
+        "mc:confirm_restart",
+        "mc:backups",
+        "mc:manual_menu",
+        "nav:home",
+    ]
+
+
+def test_admin_menu_markup_mods_row_third_after_balance() -> None:
+    """Админ-панель: ряд 3 — две кнопки модов под полной строкой баланса."""
+
+    markup = admin_menu_markup()
+    rows = [[str(b.callback_data) for b in row] for row in markup.inline_keyboard]
+    assert rows[0] == ["adm:vps_status", "adm:mc_status"]
+    assert rows[1] == ["adm:vps_balance"]
+    assert rows[2] == ["adm:mods_plan", "adm:confirm_mods_apply"]
+    assert rows[3] == ["nav:home"]

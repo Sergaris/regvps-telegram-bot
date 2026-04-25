@@ -7,8 +7,15 @@ from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, 
 from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, Defaults
 
-from vps_telegram_bot.config import AppSettings
-from vps_telegram_bot.minecraft_handlers import minecraft_menu_markup, register_minecraft_handlers
+from vps_telegram_bot.config import AppSettings, McopsRemoteSettings
+from vps_telegram_bot.minecraft_handlers import (
+    admin_menu_markup,
+    admin_panel_run_mods_apply,
+    admin_panel_run_mods_plan,
+    admin_panel_show_mods_apply_confirm,
+    minecraft_menu_markup,
+    register_minecraft_handlers,
+)
 from vps_telegram_bot.reglet_brief import format_reglet_telegram
 from vps_telegram_bot.regru_client import (
     RegletAction,
@@ -16,6 +23,7 @@ from vps_telegram_bot.regru_client import (
     RegRuClientError,
     format_balance_telegram,
 )
+from vps_telegram_bot.remote_mcops import run_remote_mcops
 
 log = logging.getLogger(__name__)
 
@@ -38,25 +46,22 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("VPS", callback_data="nav:vps"),
                 InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
             ],
+            [InlineKeyboardButton("Админская чепуха", callback_data="nav:admin")],
         ]
     )
 
 
 def _vps_menu_markup() -> InlineKeyboardMarkup:
-    """Меню действий с Reg.ru VPS."""
+    """Меню действий с Reg.ru VPS (как в макете)."""
 
     return InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton("Запуск", callback_data="vps:start")],
             [
-                InlineKeyboardButton("Статус", callback_data="vps:info"),
-                InlineKeyboardButton("Баланс", callback_data="vps:balance"),
+                InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
             ],
-            [InlineKeyboardButton("Запустить VPS", callback_data="vps:start")],
-            [
-                InlineKeyboardButton("Остановить", callback_data="vps:confirm_stop"),
-                InlineKeyboardButton("Перезагрузить", callback_data="vps:confirm_reboot"),
-            ],
-            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            [InlineKeyboardButton("Назад", callback_data="nav:home")],
         ]
     )
 
@@ -256,7 +261,7 @@ def _handler_list(
         CommandHandler("vps_reboot", _wrap(RegletAction.REBOOT), block=False),
         CallbackQueryHandler(
             _menu_callback_router(settings),
-            pattern=r"^(nav|vps):[A-Za-z0-9_-]+$",
+            pattern=r"^(nav|vps|adm):[A-Za-z0-9_-]+$",
         ),
     ]
     base.extend(register_minecraft_handlers(settings))
@@ -288,7 +293,10 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await q.edit_message_text("Главное меню", reply_markup=_home_menu_markup())
             return
         if data == "nav:vps":
-            await q.edit_message_text("VPS: выберите действие", reply_markup=_vps_menu_markup())
+            await q.edit_message_text("VPS", reply_markup=_vps_menu_markup())
+            return
+        if data == "nav:admin":
+            await q.edit_message_text("Админская чепуха", reply_markup=admin_menu_markup())
             return
         if data == "nav:help":
             help_text = _full_help_ru(settings)
@@ -301,19 +309,113 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
                 )
             return
         if data == "nav:mc":
-            await q.edit_message_text(
-                "Minecraft: выберите действие",
-                reply_markup=minecraft_menu_markup(),
-            )
+            await q.edit_message_text("Minecraft", reply_markup=minecraft_menu_markup())
             return
         if data == "nav:stack":
             await q.edit_message_text("Стек: выберите действие", reply_markup=_stack_menu_markup())
+            return
+
+        if data.startswith("adm:"):
+            await _handle_admin_button(q, context, settings, data)
             return
 
         if data.startswith("vps:"):
             await _handle_vps_button(q, context, data)
 
     return handler
+
+
+async def _fetch_vps_status_text(regru: RegRuClient, settings: AppSettings) -> str:
+    """Текст сводки VPS для кнопок и админ-панели."""
+
+    try:
+        payload = await regru.fetch_reglets()
+        reglet_detail = None
+        try:
+            one = await regru.fetch_reglet()
+            r = one.get("reglet") if isinstance(one, dict) else None
+            if isinstance(r, dict):
+                reglet_detail = r
+        except RegRuClientError:
+            pass
+        return format_reglet_telegram(
+            payload,
+            reglet_id=settings.reglet_id,
+            reglet_detail=reglet_detail,
+        )
+    except RegRuClientError:
+        log.exception("fetch reglets failed from admin/vps button")
+        return "Панель недоступна или отклонила запрос. Повторите позже."
+
+
+async def _handle_admin_button(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    settings: AppSettings,
+    data: str,
+) -> None:
+    """Панель «Админская чепуха»: статусы, баланс, Modrinth."""
+
+    regru = _reg_client(context)
+    remote: McopsRemoteSettings | None = settings.mcops_remote
+    markup = admin_menu_markup()
+
+    if data == "adm:vps_status":
+        await q.edit_message_text("Запрашиваю статус VPS...", reply_markup=markup)
+        text = await _fetch_vps_status_text(regru, settings)
+        await q.edit_message_text(text, reply_markup=markup)
+        return
+    if data == "adm:vps_balance":
+        await q.edit_message_text("Запрашиваю баланс VPS...", reply_markup=markup)
+        try:
+            text = format_balance_telegram(await regru.fetch_balance_data())
+        except RegRuClientError:
+            log.exception("fetch balance_data failed from admin button")
+            text = "Панель недоступна или отклонила запрос. Повторите позже."
+        await q.edit_message_text(text, reply_markup=markup)
+        return
+    if data == "adm:mc_status":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await q.edit_message_text("Запрашиваю статус Minecraft...", reply_markup=markup)
+        code, out, err = await run_remote_mcops(remote, ["status", "--json"])
+        text = (
+            out.strip()[:3500]
+            if code == 0
+            else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
+        )
+        await q.edit_message_text(text, reply_markup=markup)
+        return
+    if data == "adm:mods_plan":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_panel_run_mods_plan(q, remote)
+        return
+    if data == "adm:confirm_mods_apply":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_panel_show_mods_apply_confirm(q)
+        return
+    if data == "adm:do_mods_apply":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_panel_run_mods_apply(q, remote)
 
 
 async def _handle_vps_button(
@@ -324,26 +426,10 @@ async def _handle_vps_button(
     """Execute a VPS action from an inline button."""
 
     regru = _reg_client(context)
+    settings: AppSettings = context.application.bot_data["settings"]
     if data == "vps:info":
         await q.edit_message_text("VPS: запрашиваю статус...", reply_markup=_vps_menu_markup())
-        try:
-            payload = await regru.fetch_reglets()
-            reglet_detail = None
-            try:
-                one = await regru.fetch_reglet()
-                r = one.get("reglet") if isinstance(one, dict) else None
-                if isinstance(r, dict):
-                    reglet_detail = r
-            except RegRuClientError:
-                pass
-            text = format_reglet_telegram(
-                payload,
-                reglet_id=context.application.bot_data["settings"].reglet_id,
-                reglet_detail=reglet_detail,
-            )
-        except RegRuClientError:
-            log.exception("fetch reglets failed from button")
-            text = "Панель недоступна или отклонила запрос. Повторите позже."
+        text = await _fetch_vps_status_text(regru, settings)
         await q.edit_message_text(text, reply_markup=_vps_menu_markup())
         return
     if data == "vps:balance":
@@ -477,7 +563,7 @@ def _vps_command_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text("VPS: выберите действие", reply_markup=_vps_menu_markup())
+        await m.reply_text("VPS", reply_markup=_vps_menu_markup())
 
     return handler
 
@@ -486,9 +572,11 @@ def _start_brief_ru() -> str:
     """Короткое приветствие для ``/start``: только смысл кнопок главного меню."""
 
     return (
-        "Главное меню внизу — две кнопки:\n"
-        "• VPS — виртуалка в Reg.ru: статус, баланс, запуск, остановка, перезагрузка.\n"
-        "• Minecraft — сервис на хосте (по SSH): статус, игроки, старт/стоп, бэкапы.\n"
+        "Главное меню внизу:\n"
+        "• VPS — виртуалка в Reg.ru: запуск, стоп, перезапуск.\n"
+        "• Minecraft — по SSH: перезапуск сервиса, бэкапы, ручной бэкап.\n"
+        "• Админская чепуха — статусы VPS и Minecraft, баланс, "
+        "проверка и обновление модов Modrinth.\n"
         "\n"
         "Полный список команд: /help. Кратко по командам VPS: /vps.\n"
         "Не запускайте бота на той же машине, которой он управляет — иначе после stop "

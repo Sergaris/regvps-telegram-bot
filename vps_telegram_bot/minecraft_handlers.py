@@ -44,31 +44,104 @@ def _tail_text(text: str, *, max_len: int) -> str:
     return "...\n" + clean[-max_len:]
 
 
+def tail_command_text(text: str, *, max_len: int) -> str:
+    """Обрезка длинного вывода команд для сообщений Telegram."""
+
+    return _tail_text(text, max_len=max_len)
+
+
 def minecraft_menu_markup() -> InlineKeyboardMarkup:
-    """Клавиатура вкладки Minecraft (единый источник для бота и callback-обработчиков)."""
+    """Клавиатура вкладки Minecraft (как в макете: перезапуск, бэкапы, ручной бэкап, назад)."""
+
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Перезапуск", callback_data="mc:confirm_restart")],
+            [InlineKeyboardButton("Бэкапы", callback_data="mc:backups")],
+            [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
+            [InlineKeyboardButton("Назад", callback_data="nav:home")],
+        ]
+    )
+
+
+def admin_menu_markup() -> InlineKeyboardMarkup:
+    """Панель «Админская чепуха»: статусы, баланс, моды Modrinth, назад."""
 
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Статус", callback_data="mc:status"),
-                InlineKeyboardButton("Игроки", callback_data="mc:players"),
+                InlineKeyboardButton("Статус VPS", callback_data="adm:vps_status"),
+                InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
             ],
+            [InlineKeyboardButton("Баланс VPS", callback_data="adm:vps_balance")],
             [
-                InlineKeyboardButton("Запустить", callback_data="mc:start"),
-                InlineKeyboardButton("Остановить", callback_data="mc:confirm_stop"),
+                InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
+                InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
             ],
+            [InlineKeyboardButton("Назад", callback_data="nav:home")],
+        ]
+    )
+
+
+def admin_mods_apply_confirm_markup() -> InlineKeyboardMarkup:
+    """Подтверждение mcops mods apply из панели админа."""
+
+    return InlineKeyboardMarkup(
+        [
             [
-                InlineKeyboardButton("Перезапустить", callback_data="mc:confirm_restart"),
-                InlineKeyboardButton("Бэкапы", callback_data="mc:backups"),
+                InlineKeyboardButton("Да, обновить моды", callback_data="adm:do_mods_apply"),
+                InlineKeyboardButton("Назад", callback_data="nav:admin"),
             ],
-            [
-                InlineKeyboardButton("Проверить моды", callback_data="mc:mods_plan"),
-                InlineKeyboardButton("Обновить моды", callback_data="mc:confirm_mods_apply"),
-            ],
-            [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
+
+
+async def admin_panel_run_mods_plan(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+) -> None:
+    """Выполнить ``mods plan --local`` и вернуть клавиатуру админ-панели."""
+
+    await q.edit_message_text("Проверяю обновления модов (mcops mods plan --local)...")
+    code, out, err = await run_remote_mcops(remote, ["mods", "plan", "--local"])
+    blob = (out + "\n" + err).strip()
+    text = (
+        _tail_text(blob, max_len=3500)
+        if code == 0
+        else f"mods plan: код {code}\n{_tail_text(blob, max_len=3200)}"
+    )
+    await q.edit_message_text(text, reply_markup=admin_menu_markup())
+
+
+async def admin_panel_show_mods_apply_confirm(q: CallbackQuery) -> None:
+    """Экран подтверждения перед ``mods apply --local``."""
+
+    await q.edit_message_text(
+        "Применить обновления Modrinth на сервере?\n"
+        "Будут скачаны и заменены соответствующие JAR в каталоге mods "
+        "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
+        "сделайте это отдельно.",
+        reply_markup=admin_mods_apply_confirm_markup(),
+    )
+
+
+async def admin_panel_run_mods_apply(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+) -> None:
+    """Выполнить ``mods apply --local`` и вернуть клавиатуру админ-панели."""
+
+    await q.edit_message_text(
+        "Применяю обновления модов (mcops mods apply --local).\nЭто может занять несколько минут..."
+    )
+    code, out, err = await run_remote_mcops(remote, ["mods", "apply", "--local"])
+    blob = (out + "\n" + err).strip()
+    text = (
+        _tail_text(blob, max_len=3500)
+        if code == 0
+        else f"mods apply: код {code}\n{_tail_text(blob, max_len=3200)}"
+    )
+    await q.edit_message_text(text, reply_markup=admin_menu_markup())
 
 
 def _backup_nav_markup() -> InlineKeyboardMarkup:
@@ -643,53 +716,6 @@ async def _handle_minecraft_button(
         return
     if action == "do_restart":
         await _run_minecraft_service_button(q, remote, "restart")
-        return
-    if action == "mods_plan":
-        await q.edit_message_text(
-            "Minecraft: проверяю обновления модов (mcops mods plan --local)..."
-        )
-        code, out, err = await run_remote_mcops(remote, ["mods", "plan", "--local"])
-        blob = (out + "\n" + err).strip()
-        text = (
-            _tail_text(blob, max_len=3500)
-            if code == 0
-            else f"mods plan: код {code}\n{_tail_text(blob, max_len=3200)}"
-        )
-        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
-        await _safe_answer_callback(q)
-        return
-    if action == "confirm_mods_apply":
-        await q.edit_message_text(
-            "Применить обновления Modrinth на сервере?\n"
-            "Будут скачаны и заменены соответствующие JAR в каталоге mods "
-            "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
-            "сделайте это отдельно.",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton("Да, обновить моды", callback_data="mc:do_mods_apply"),
-                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
-                    ],
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
-        )
-        await _safe_answer_callback(q)
-        return
-    if action == "do_mods_apply":
-        await q.edit_message_text(
-            "Minecraft: применяю обновления модов (mcops mods apply --local).\n"
-            "Это может занять несколько минут..."
-        )
-        code, out, err = await run_remote_mcops(remote, ["mods", "apply", "--local"])
-        blob = (out + "\n" + err).strip()
-        text = (
-            _tail_text(blob, max_len=3500)
-            if code == 0
-            else f"mods apply: код {code}\n{_tail_text(blob, max_len=3200)}"
-        )
-        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
-        await _safe_answer_callback(q)
         return
     if action == "backups":
         await _show_backup_catalog(q, context, remote)
