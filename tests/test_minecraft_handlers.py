@@ -2,6 +2,7 @@
 
 from vps_telegram_bot.minecraft_handlers import (
     _manual_slot_labels,
+    _mcops_level_seed_unsupported_hint,
     _world_reset_argv_for_telegram,
     admin_menu_markup,
     minecraft_menu_markup,
@@ -99,3 +100,9 @@ def test_world_reset_argv_random_vs_fixed() -> None:
         "--level-seed",
         "42",
     ]
+
+
+def test_mcops_level_seed_unsupported_hint_detects_argparse() -> None:
+    err = "cli.py: error: unrecognized arguments: --level-seed 123"
+    assert "mcops" in _mcops_level_seed_unsupported_hint(err).lower()
+    assert _mcops_level_seed_unsupported_hint("ok") == ""

@@ -88,17 +88,11 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
 
 
 _WORLD_REGEN_INTRO_RU = (
-    "Перегенерация мира (mcops world reset)\n\n"
-    "• Кнопка «Дальше» и финальное «Да»: случайный seed — из server.properties "
-    "убираются все строки level-seed=…; при следующем старте сервер получит "
-    "новый случайный сид.\n"
-    "• Свой seed: команда /mc_world_regen confirm и дальше значение одним "
-    "аргументом или несколькими словами через пробел. Примеры: "
-    "/mc_world_regen confirm 12345 или /mc_world_regen confirm Artemis.\n"
-    "• Без seed после confirm (только /mc_world_regen confirm) — как пустое поле "
-    "сида: level-seed очищается, мир со случайным сидом.\n\n"
-    "Будут удалены каталоги мира (world, world_nether, world_the_end и т.д.). "
-    "Tar-бэкап перед этим не делается (--no-backup). Игроков заранее предупредите."
+    "Удалим папки мира и поднимем новый (tar-бэкапа нет).\n\n"
+    "Случайный сид: «Дальше» → красная «Да».\n"
+    "Свой сид: /mc_world_regen confirm ваш_сид\n"
+    "Только случайный: /mc_world_regen confirm\n\n"
+    "Игроков предупредите заранее."
 )
 
 
@@ -109,7 +103,7 @@ def admin_world_regen_step1_markup() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "Дальше — к подтверждению",
+                    "Дальше",
                     callback_data="adm:world_regen_confirm",
                 ),
             ],
@@ -126,7 +120,7 @@ def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "Да, удалить мир (случайный seed)",
+                    "Да, новый мир (случайный сид)",
                     callback_data="adm:world_regen_do",
                 ),
                 InlineKeyboardButton("Отмена", callback_data="nav:admin"),
@@ -198,6 +192,18 @@ async def admin_panel_run_mods_apply(
     await q.edit_message_text(text, reply_markup=admin_menu_markup())
 
 
+def _mcops_level_seed_unsupported_hint(blob: str) -> str:
+    """Если на хосте старый mcops без ``world reset --level-seed`` — короткая подсказка."""
+
+    low = blob.lower()
+    if "unrecognized arguments" in low and "level-seed" in low:
+        return (
+            "\n\nСкорее всего на сервере старый mcops (нет флага --level-seed). "
+            "Обновите minecraft-server-ops на хосте Minecraft и повторите."
+        )
+    return ""
+
+
 def _world_reset_argv_for_telegram(*, seed: str | None) -> list[str]:
     """Аргументы для ``world reset --no-backup --local`` на хосте Minecraft."""
 
@@ -222,8 +228,7 @@ async def admin_world_regen_show_final_confirm(q: CallbackQuery) -> None:
     """Экран 2: последнее подтверждение."""
 
     await q.edit_message_text(
-        "Последнее подтверждение: сервис остановится, каталоги мира удалятся, "
-        "в server.properties уберутся строки level-seed (новый мир со случайным сидом).",
+        "Точно? Удалим мир, сид будет случайным при следующем старте.",
         reply_markup=admin_world_regen_final_markup(),
     )
 
@@ -237,11 +242,7 @@ async def admin_world_regen_execute(
     """Запуск ``mcops world reset`` на удалённом хосте."""
 
     argv = _world_reset_argv_for_telegram(seed=seed)
-    await q.edit_message_text(
-        "Перегенерация мира…\n"
-        f"Команда: mcops {' '.join(argv)}\n"
-        "Сообщение будет обновляться, пока выполняется операция."
-    )
+    await q.edit_message_text("Сброс мира… Подождите, может занять минуту.")
     task = asyncio.create_task(run_remote_mcops(remote, argv))
     elapsed = 0
     while not task.done():
@@ -249,13 +250,13 @@ async def admin_world_regen_execute(
         elapsed += 10
         await _safe_edit_callback_message(
             q,
-            "Перегенерация мира…\n"
-            f"Прошло: {elapsed} с.\n"
-            "Остановка сервиса и удаление каталогов могут занять время.",
+            f"Сброс мира… прошло {elapsed} с.",
         )
     code, out, err = await task
-    tail = tail_command_text(out + "\n" + err, max_len=3200)
-    text = f"Готово. Код {code}\n{tail}" if code == 0 else f"Ошибка. Код {code}\n{tail}"
+    blob = (out + "\n" + err).strip()
+    tail = tail_command_text(blob, max_len=3000)
+    hint = _mcops_level_seed_unsupported_hint(blob)
+    text = f"Готово. Код {code}\n{tail}{hint}" if code == 0 else f"Ошибка. Код {code}\n{tail}{hint}"
     await _safe_edit_callback_message(q, text, reply_markup=admin_menu_markup())
 
 
@@ -523,27 +524,23 @@ async def _reply_world_regen_progress(
 ) -> None:
     """Запускает mcops world reset и периодически обновляет статус в сообщении."""
 
-    status_msg = await msg.reply_text(
-        "Перегенерация мира…\n"
-        f"Команда: mcops {' '.join(argv)}\n"
-        "Сообщение будет обновляться, пока выполняется операция."
-    )
+    status_msg = await msg.reply_text("Сброс мира… Подождите, может занять минуту.")
     task = asyncio.create_task(run_remote_mcops(remote, argv))
     elapsed = 0
     while not task.done():
         await asyncio.sleep(10.0)
         elapsed += 10
         try:
-            await status_msg.edit_text(
-                "Перегенерация мира…\n"
-                f"Прошло: {elapsed} с.\n"
-                "Остановка сервиса и удаление каталогов могут занять время."
-            )
+            await status_msg.edit_text(f"Сброс мира… прошло {elapsed} с.")
         except TelegramError:
             log.warning("Could not edit world regen progress message", exc_info=True)
     code, out, err = await task
-    tail = tail_command_text(out + "\n" + err, max_len=3200)
-    result_text = f"Готово. Код {code}\n{tail}" if code == 0 else f"Ошибка. Код {code}\n{tail}"
+    blob = (out + "\n" + err).strip()
+    tail = tail_command_text(blob, max_len=3000)
+    hint = _mcops_level_seed_unsupported_hint(blob)
+    result_text = (
+        f"Готово. Код {code}\n{tail}{hint}" if code == 0 else f"Ошибка. Код {code}\n{tail}{hint}"
+    )
     try:
         await status_msg.edit_text(result_text, reply_markup=minecraft_menu_markup())
     except TelegramError:
@@ -567,12 +564,10 @@ def _mc_world_regen_handler(settings: AppSettings) -> Handler:
         args = list(context.args or [])
         if not args or args[0] != "confirm":
             await msg.reply_text(
-                "Перегенерация мира удалит каталоги мира и при необходимости "
-                "настроит level-seed в server.properties (mcops world reset --no-backup).\n\n"
-                "• Случайный сид (как пустое поле сида): /mc_world_regen confirm\n"
-                "• Фиксированный сид: /mc_world_regen confirm <значение> "
-                "(одно слово или несколько через пробел).\n\n"
-                "То же самое из меню: Админская чепуха → Перегенерить мир."
+                "Новый мир (папки world* удалятся, tar-бэкапа нет).\n\n"
+                "/mc_world_regen confirm — случайный сид\n"
+                "/mc_world_regen confirm ваш_сид — свой сид\n\n"
+                "Кнопками: Админка → Перегенерить мир."
             )
             return
         seed: str | None = " ".join(args[1:]).strip() or None

@@ -669,9 +669,8 @@ def _full_help_ru(settings: AppSettings) -> str:
             "  После /mc_backups: нажмите бэкап → «Да, откатить» запускает "
             "mcops backup restore … --confirm-destructive на хосте.",
             "/mc_backup_manual manual-1|manual-2|manual-3 — ручной tar-слот (mcops backup create).",
-            "/mc_world_regen — подсказка по перегенерации мира; "
-            "/mc_world_regen confirm — случайный seed (очистка level-seed в server.properties); "
-            "/mc_world_regen confirm <сид> — фиксированный seed. Без tar-бэкапа (--no-backup).",
+            "/mc_world_regen — как сбросить мир; "
+            "/mc_world_regen confirm или confirm <сид> (нужен свежий mcops с --level-seed).",
             "",
             "/stack_status — сводка VPS (/vps_info) и сразу статус Minecraft по SSH.",
             "/stack_start — запуск VPS в панели, ожидание SSH, затем systemctl start Minecraft.",
