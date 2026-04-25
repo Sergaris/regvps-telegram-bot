@@ -9,6 +9,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from vps_telegram_bot.config import AppSettings, McopsRemoteSettings
 from vps_telegram_bot.minecraft_handlers import (
+    admin_backup_delete_show_catalog,
     admin_menu_markup,
     admin_panel_run_mods_apply,
     admin_panel_run_mods_plan,
@@ -416,6 +417,16 @@ async def _handle_admin_button(
             )
             return
         await admin_panel_run_mods_apply(q, remote)
+        return
+    if data == "adm:backup_delete_menu":
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=markup,
+            )
+            return
+        await admin_backup_delete_show_catalog(q, context, remote)
+        return
 
 
 async def _handle_vps_button(
@@ -576,7 +587,7 @@ def _start_brief_ru() -> str:
         "• VPS — виртуалка в Reg.ru: запуск, стоп, перезапуск.\n"
         "• Minecraft — по SSH: перезапуск сервиса, бэкапы, ручной бэкап.\n"
         "• Админская чепуха — статусы VPS и Minecraft, баланс, "
-        "проверка и обновление модов Modrinth.\n"
+        "проверка и обновление модов Modrinth, выборочное удаление бэкапов.\n"
         "\n"
         "Полный список команд: /help. Кратко по командам VPS: /vps.\n"
         "Не запускайте бота на той же машине, которой он управляет — иначе после stop "

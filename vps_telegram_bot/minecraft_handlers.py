@@ -29,6 +29,9 @@ _CALLBACK_MC = re.compile(r"^mc:([A-Za-z0-9_-]+)$")
 _CALLBACK_MANUAL = re.compile(r"^mcm:(manual-[123])$")
 _CALLBACK_MANUAL_GO = re.compile(r"^mcmy:(manual-[123])$")
 _CALLBACK_STACK = re.compile(r"^stk:([A-Za-z0-9_-]+)$")
+_CALLBACK_AB_PICK = re.compile(r"^abp:([A-Za-z0-9_-]+):(\d+)$")
+_CALLBACK_AB_YES = re.compile(r"^aby:([A-Za-z0-9_-]+):(\d+)$")
+_CALLBACK_AB_NO = re.compile(r"^abx:([A-Za-z0-9_-]+):(\d+)$")
 _MANUAL_BACKUP_RE = re.compile(r"^tar:worlds-manual-(manual-[123])-.+\.(?:tar\.gz|tgz)$")
 
 
@@ -77,6 +80,7 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
                 InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
             ],
+            [InlineKeyboardButton("Удалить бэкап", callback_data="adm:backup_delete_menu")],
             [InlineKeyboardButton("Назад", callback_data="nav:home")],
         ]
     )
@@ -148,6 +152,17 @@ def _backup_nav_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Назад к Minecraft", callback_data="nav:mc")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _admin_backup_delete_nav_markup() -> InlineKeyboardMarkup:
+    """Навигация после операций удаления бэкапа из админки."""
+
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("К админке", callback_data="nav:admin")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -308,6 +323,89 @@ async def _remote_json_lines(
     return code, rows
 
 
+def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
+    """Подтверждение и вызов ``mcops backup delete`` из админки."""
+
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
+        if q is None or q.data is None:
+            return
+        u = q.from_user
+        if not _is_allowed(u.id if u else None, settings):
+            await q.answer("Нет доступа.", show_alert=True)
+            return
+        await _safe_answer_callback(q)
+        remote = _require_remote(settings)
+        catalog_map: dict[str, list[tuple[str, str]]] = context.application.bot_data.get(
+            _BACKUP_CATALOG_KEY,
+            {},
+        )
+        uid = u.id
+
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=_admin_backup_delete_nav_markup(),
+            )
+            return
+
+        if (m := _CALLBACK_AB_PICK.match(q.data)) is not None:
+            token = m.group(1)
+            idx = int(m.group(2))
+            catalog = catalog_map.get(f"{uid}:{token}", [])
+            if idx < 0 or idx >= len(catalog):
+                await q.answer("Список устарел. Откройте «Удалить бэкап» снова.", show_alert=True)
+                return
+            eid, label = catalog[idx]
+            kb = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, удалить", callback_data=f"aby:{token}:{idx}"),
+                        InlineKeyboardButton("Отмена", callback_data=f"abx:{token}:{idx}"),
+                    ],
+                    [InlineKeyboardButton("К списку", callback_data="adm:backup_delete_menu")],
+                    [InlineKeyboardButton("К админке", callback_data="nav:admin")],
+                ]
+            )
+            extra = label.strip() if label.strip() != eid.strip() else ""
+            body = (
+                "Удалить этот файл бэкапа с диска сервера?\n"
+                "Восстановить его уже будет нельзя.\n\n"
+                f"{eid}"
+                + (f"\n{extra}" if extra else "")
+            )
+            await q.edit_message_text(text=body, reply_markup=kb)
+            return
+
+        if (m := _CALLBACK_AB_NO.match(q.data)) is not None:
+            await q.edit_message_text("Удаление отменено.", reply_markup=admin_menu_markup())
+            return
+
+        if (m := _CALLBACK_AB_YES.match(q.data)) is not None:
+            token = m.group(1)
+            idx = int(m.group(2))
+            catalog = catalog_map.get(f"{uid}:{token}", [])
+            if idx < 0 or idx >= len(catalog):
+                await q.answer("Список устарел.", show_alert=True)
+                return
+            eid, _label = catalog[idx]
+            await q.edit_message_text(f"Удаляю бэкап…\n{eid}")
+            code, out, err = await run_remote_mcops(
+                remote,
+                ["backup", "delete", eid, "--local", "--confirm-destructive"],
+            )
+            tail = tail_command_text(out + "\n" + err, max_len=3200)
+            text = (
+                f"Удаление завершено. Код {code}\n{tail}"
+                if code == 0
+                else f"Ошибка удаления. Код {code}\n{tail}"
+            )
+            await q.edit_message_text(text, reply_markup=_admin_backup_delete_nav_markup())
+            return
+
+    return handler
+
+
 def register_minecraft_handlers(
     settings: AppSettings,
 ) -> list[CommandHandler | CallbackQueryHandler]:
@@ -355,6 +453,10 @@ def register_minecraft_handlers(
         CallbackQueryHandler(
             _minecraft_callback_router(settings),
             pattern=r"^stk:[A-Za-z0-9_-]+$",
+        ),
+        CallbackQueryHandler(
+            _admin_backup_delete_callback_router(settings),
+            pattern=r"^ab[pyx]:[A-Za-z0-9_-]+:\d+$",
         ),
     ]
 
@@ -552,6 +654,48 @@ async def _show_backup_catalog(
         reply_markup=InlineKeyboardMarkup(buttons),
     )
     await _safe_answer_callback(q)
+
+
+async def admin_backup_delete_show_catalog(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    remote: McopsRemoteSettings,
+) -> None:
+    """Список бэкапов с кнопками выборочного удаления (админка)."""
+
+    await q.edit_message_text("Загружаю список бэкапов для удаления...")
+    code, rows = await _remote_json_lines(remote, ["backup", "list", "--local", "--json"])
+    if code != 0:
+        await q.edit_message_text(
+            "backup list: ошибка удалённого mcops.",
+            reply_markup=_admin_backup_delete_nav_markup(),
+        )
+        return
+    if not rows:
+        await q.edit_message_text(
+            "Бэкапы не найдены.",
+            reply_markup=_admin_backup_delete_nav_markup(),
+        )
+        return
+
+    catalog: list[tuple[str, str]] = []
+    buttons: list[list[InlineKeyboardButton]] = []
+    token = secrets.token_urlsafe(6)
+    for idx, row in enumerate(rows[:20]):
+        eid = str(row.get("id") or "")
+        label = str(row.get("label") or eid)[:40]
+        if not eid:
+            continue
+        catalog.append((eid, label))
+        buttons.append([InlineKeyboardButton(label, callback_data=f"abp:{token}:{idx}")])
+    buttons.append([InlineKeyboardButton("К админке", callback_data="nav:admin")])
+    buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
+    uid = q.from_user.id
+    context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
+    await q.edit_message_text(
+        "Выберите бэкап для удаления с диска сервера (безвозвратно):",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 async def _show_manual_backup_slots(q: CallbackQuery, remote: McopsRemoteSettings) -> None:
