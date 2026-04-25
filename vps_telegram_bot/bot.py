@@ -193,6 +193,7 @@ def _handler_list(
 ) -> list[CommandHandler | CallbackQueryHandler]:
     base: list[CommandHandler | CallbackQueryHandler] = [
         CommandHandler("start", _help_text_handler(settings), block=False),
+        CommandHandler("help", _full_help_handler(settings), block=False),
         CommandHandler("vps", _vps_command_handler(settings), block=False),
         CommandHandler("vps_info", _vps_info_handler(settings), block=False),
         CommandHandler("vps_balance", _vps_balance_handler(settings), block=False),
@@ -227,6 +228,47 @@ def _help_text_handler(
     return handler
 
 
+def _full_help_handler(
+    settings: AppSettings,
+) -> Handler:
+    """Полная справка по всем командам (для ``/help``)."""
+
+    async def handler(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
+        m = update.effective_message
+        if m is None:
+            return
+        u = update.effective_user
+        if u is not None and not _is_allowed(u.id, settings):
+            await m.reply_text(_ACCESS_DENIED_RU)
+            return
+        text = _full_help_ru(settings)
+        if len(text) <= 4096:
+            await m.reply_text(text)
+            return
+        for chunk in _split_telegram_message_chunks(text, max_len=4000):
+            await m.reply_text(chunk)
+
+    return handler
+
+
+def _split_telegram_message_chunks(text: str, *, max_len: int) -> list[str]:
+    """Разбить текст на части не длиннее ``max_len`` (лимит Telegram ~4096).
+
+    Args:
+        text: Исходный текст.
+        max_len: Максимум символов в одном сообщении.
+
+    Returns:
+        Непустые части для последовательных ``reply_text``.
+    """
+
+    if not text.strip():
+        return []
+    if len(text) <= max_len:
+        return [text]
+    return [text[i : i + max_len] for i in range(0, len(text), max_len)]
+
+
 def _vps_command_handler(
     settings: AppSettings,
 ) -> Handler:
@@ -251,8 +293,64 @@ def _long_help_ru() -> str:
         "/mc_status, /mc_start, /mc_stop confirm, /mc_restart confirm, /mc_players, /mc_backups, "
         "/mc_backup_manual <manual-1|manual-2|manual-3>.\n"
         "Стек: /stack_status, /stack_start, /stack_stop confirm.\n"
-        "Команда /vps — список. Не кладите бота на тот же VPS, которым он управляет."
+        "Команда /vps — короткий перечень. Полное описание: /help.\n"
+        "Не кладите бота на тот же VPS, которым он управляет."
     )
+
+
+def _full_help_ru(settings: AppSettings) -> str:
+    """Текст справки ``/help`` (все команды и назначение)."""
+
+    lines: list[str] = [
+        "Справка по командам бота",
+        "",
+        "Общее",
+        "/start — краткое приветствие и перечень команд.",
+        "/help — эта справка: все команды и что они делают.",
+        "/vps — короткий список команд без пояснений.",
+        "",
+        "VPS (Reg.ru CloudVPS, API reglet)",
+        "/vps_info — статус виртуалки, IP, регион, тариф, диск, образ, последняя операция "
+        "(GET /reglets и детали по вашему REGRU_REGLET_ID).",
+        "/vps_balance — баланс лицевого счёта в рублях (balance_data).",
+        "/vps_start — запуск reglet в панели (POST start).",
+        "/vps_stop confirm — остановка reglet; слово confirm обязательно.",
+        "/vps_reboot confirm — перезагрузка reglet; confirm обязателен.",
+        "Старт/стоп/ребут в панели иногда занимают до минуты.",
+        "",
+        "Minecraft и стек (удалённо: SSH на хост и python -m mcops.cli в MCOPS_SSH_REMOTE_CWD).",
+    ]
+    if settings.mcops_remote is None:
+        lines.extend(
+            [
+                "Сейчас MCOPS_SSH_* не настроены: команды /mc_* и /stack_* недоступны.",
+                "После настройки SSH (ключ или MCOPS_SSH_PASSWORD) станут активны строки ниже.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "/mc_status — JSON статуса Minecraft (mcops status --json): "
+            "systemd, phase, хвост лога.",
+            "/mc_start — systemctl start юнита Minecraft на сервере.",
+            "/mc_stop confirm — остановка сервиса Minecraft; нужен confirm.",
+            "/mc_restart confirm — перезапуск сервиса Minecraft; нужен confirm.",
+            "/mc_players — число игроков онлайн (RCON list через mcops).",
+            "/mc_backups — список бэкапов (tar и/или мод/SimpleBackups); "
+            "кнопки для шага подтверждения отката.",
+            "  После /mc_backups: нажмите бэкап → «Да, откатить» запускает "
+            "mcops backup restore … --confirm-destructive на хосте.",
+            "/mc_backup_manual manual-1|manual-2|manual-3 — ручной tar-слот (mcops backup create).",
+            "",
+            "/stack_status — сводка VPS (/vps_info) и сразу статус Minecraft по SSH.",
+            "/stack_start — запуск VPS в панели, ожидание SSH, затем systemctl start Minecraft.",
+            "/stack_stop confirm — остановка Minecraft; при успехе и phase=stopped "
+            "— stop VPS в панели; confirm обязателен.",
+            "",
+            "Безопасность: бот только для user_id из TELEGRAM_ALLOWED_USER_IDS.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _vps_list_ru() -> str:

@@ -257,8 +257,10 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
                     ]
                 ]
             )
+            extra = label.strip() if label.strip() != eid.strip() else ""
+            confirm_body = f"Подтвердите откат на:\n{eid}" + (f"\n{extra}" if extra else "")
             await q.edit_message_text(
-                text=f"Подтвердите откат на:\n{eid}\n{label}",
+                text=confirm_body,
                 reply_markup=kb,
             )
             await q.answer()
