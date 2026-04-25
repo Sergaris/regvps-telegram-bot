@@ -1,6 +1,6 @@
 """Tests for Minecraft Telegram helper formatting."""
 
-from vps_telegram_bot.minecraft_handlers import _manual_slot_labels
+from vps_telegram_bot.minecraft_handlers import _manual_slot_labels, minecraft_menu_markup
 
 
 def test_manual_slot_labels_show_occupied_and_empty_slots() -> None:
@@ -39,3 +39,14 @@ def test_manual_slot_labels_prefer_manual_slot_status_rows() -> None:
     assert labels["manual-2"].startswith("manual-2: занят")
     assert labels["manual-3"] == "manual-3: пусто"
 
+
+def test_minecraft_menu_markup_includes_modrinth_callbacks() -> None:
+    """Главное меню Minecraft содержит кнопки плана и подтверждения apply Modrinth."""
+
+    markup = minecraft_menu_markup()
+    flat: list[str] = []
+    for row in markup.inline_keyboard:
+        for btn in row:
+            flat.append(str(btn.callback_data))
+    assert "mc:mods_plan" in flat
+    assert "mc:confirm_mods_apply" in flat

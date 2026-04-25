@@ -44,7 +44,9 @@ def _tail_text(text: str, *, max_len: int) -> str:
     return "...\n" + clean[-max_len:]
 
 
-def _minecraft_menu_markup() -> InlineKeyboardMarkup:
+def minecraft_menu_markup() -> InlineKeyboardMarkup:
+    """Клавиатура вкладки Minecraft (единый источник для бота и callback-обработчиков)."""
+
     return InlineKeyboardMarkup(
         [
             [
@@ -58,6 +60,10 @@ def _minecraft_menu_markup() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton("Перезапустить", callback_data="mc:confirm_restart"),
                 InlineKeyboardButton("Бэкапы", callback_data="mc:backups"),
+            ],
+            [
+                InlineKeyboardButton("Проверить моды", callback_data="mc:mods_plan"),
+                InlineKeyboardButton("Обновить моды", callback_data="mc:confirm_mods_apply"),
             ],
             [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
@@ -296,7 +302,7 @@ def _mc_status_handler(settings: AppSettings) -> Handler:
         if code != 0:
             await msg.reply_text(f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}")
             return
-        await msg.reply_text(out.strip()[:3900], reply_markup=_minecraft_menu_markup())
+        await msg.reply_text(out.strip()[:3900], reply_markup=minecraft_menu_markup())
 
     return handler
 
@@ -319,7 +325,7 @@ def _mc_service_handler(settings: AppSettings, action: str) -> Handler:
         await msg.reply_text(f"Minecraft: отправляю systemctl {action}…")
         code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
         tail = _tail_text(out + "\n" + err, max_len=3500)
-        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
+        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=minecraft_menu_markup())
 
     return handler
 
@@ -342,7 +348,7 @@ def _mc_players_handler(settings: AppSettings) -> Handler:
             return
         await msg.reply_text(
             f"Игроков онлайн (по RCON list): {out.strip()}",
-            reply_markup=_minecraft_menu_markup(),
+            reply_markup=minecraft_menu_markup(),
         )
 
     return handler
@@ -585,7 +591,7 @@ async def _handle_minecraft_button(
             if code == 0
             else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
         )
-        await q.edit_message_text(text, reply_markup=_minecraft_menu_markup())
+        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
         await _safe_answer_callback(q)
         return
     if action == "players":
@@ -596,7 +602,7 @@ async def _handle_minecraft_button(
             if code == 0
             else f"players count failed ({code}):\n{(err or out)[:1500]}"
         )
-        await q.edit_message_text(text, reply_markup=_minecraft_menu_markup())
+        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
         await _safe_answer_callback(q)
         return
     if action == "start":
@@ -638,6 +644,53 @@ async def _handle_minecraft_button(
     if action == "do_restart":
         await _run_minecraft_service_button(q, remote, "restart")
         return
+    if action == "mods_plan":
+        await q.edit_message_text(
+            "Minecraft: проверяю обновления модов (mcops mods plan --local)..."
+        )
+        code, out, err = await run_remote_mcops(remote, ["mods", "plan", "--local"])
+        blob = (out + "\n" + err).strip()
+        text = (
+            _tail_text(blob, max_len=3500)
+            if code == 0
+            else f"mods plan: код {code}\n{_tail_text(blob, max_len=3200)}"
+        )
+        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
+        await _safe_answer_callback(q)
+        return
+    if action == "confirm_mods_apply":
+        await q.edit_message_text(
+            "Применить обновления Modrinth на сервере?\n"
+            "Будут скачаны и заменены соответствующие JAR в каталоге mods "
+            "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
+            "сделайте это отдельно.",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, обновить моды", callback_data="mc:do_mods_apply"),
+                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "do_mods_apply":
+        await q.edit_message_text(
+            "Minecraft: применяю обновления модов (mcops mods apply --local).\n"
+            "Это может занять несколько минут..."
+        )
+        code, out, err = await run_remote_mcops(remote, ["mods", "apply", "--local"])
+        blob = (out + "\n" + err).strip()
+        text = (
+            _tail_text(blob, max_len=3500)
+            if code == 0
+            else f"mods apply: код {code}\n{_tail_text(blob, max_len=3200)}"
+        )
+        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
+        await _safe_answer_callback(q)
+        return
     if action == "backups":
         await _show_backup_catalog(q, context, remote)
         return
@@ -653,7 +706,7 @@ async def _run_minecraft_service_button(
     await q.edit_message_text(f"Minecraft: отправляю systemctl {action}...")
     code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
     tail = _tail_text(out + "\n" + err, max_len=3000)
-    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
+    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=minecraft_menu_markup())
     await _safe_answer_callback(q)
 
 
@@ -857,7 +910,7 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
         if remote is None:
             await q.edit_message_text(
                 "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
-                reply_markup=_minecraft_menu_markup(),
+                reply_markup=minecraft_menu_markup(),
             )
             return
         uid = u.id

@@ -8,7 +8,7 @@ from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, Defaults
 
 from vps_telegram_bot.config import AppSettings
-from vps_telegram_bot.minecraft_handlers import register_minecraft_handlers
+from vps_telegram_bot.minecraft_handlers import minecraft_menu_markup, register_minecraft_handlers
 from vps_telegram_bot.reglet_brief import format_reglet_telegram
 from vps_telegram_bot.regru_client import (
     RegletAction,
@@ -56,29 +56,6 @@ def _vps_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Остановить", callback_data="vps:confirm_stop"),
                 InlineKeyboardButton("Перезагрузить", callback_data="vps:confirm_reboot"),
             ],
-            [InlineKeyboardButton("Домой", callback_data="nav:home")],
-        ]
-    )
-
-
-def _minecraft_menu_markup() -> InlineKeyboardMarkup:
-    """Меню действий с Minecraft-сервисом."""
-
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Статус", callback_data="mc:status"),
-                InlineKeyboardButton("Игроки", callback_data="mc:players"),
-            ],
-            [
-                InlineKeyboardButton("Запустить", callback_data="mc:start"),
-                InlineKeyboardButton("Остановить", callback_data="mc:confirm_stop"),
-            ],
-            [
-                InlineKeyboardButton("Перезапустить", callback_data="mc:confirm_restart"),
-                InlineKeyboardButton("Бэкапы", callback_data="mc:backups"),
-            ],
-            [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -326,7 +303,7 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
         if data == "nav:mc":
             await q.edit_message_text(
                 "Minecraft: выберите действие",
-                reply_markup=_minecraft_menu_markup(),
+                reply_markup=minecraft_menu_markup(),
             )
             return
         if data == "nav:stack":
