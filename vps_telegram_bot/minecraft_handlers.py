@@ -8,7 +8,8 @@ import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from vps_telegram_bot.config import AppSettings, McopsRemoteSettings
@@ -23,9 +24,101 @@ _ACCESS_DENIED_RU = "Нет доступа. Этот бот только для 
 _CALLBACK_PICK = re.compile(r"^mcs:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_GO = re.compile(r"^mcy:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_NO = re.compile(r"^mcn:([A-Za-z0-9_-]+):(\d+)$")
+_CALLBACK_MC = re.compile(r"^mc:([A-Za-z0-9_-]+)$")
+_CALLBACK_MANUAL = re.compile(r"^mcm:(manual-[123])$")
+_CALLBACK_STACK = re.compile(r"^stk:([A-Za-z0-9_-]+)$")
 
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+
+
+def _tail_text(text: str, *, max_len: int) -> str:
+    """Return the end of long command output, where failures usually are."""
+
+    clean = text.strip()
+    if len(clean) <= max_len:
+        return clean
+    return "...\n" + clean[-max_len:]
+
+
+def _minecraft_menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Статус", callback_data="mc:status"),
+                InlineKeyboardButton("Игроки", callback_data="mc:players"),
+            ],
+            [
+                InlineKeyboardButton("Запустить", callback_data="mc:start"),
+                InlineKeyboardButton("Остановить", callback_data="mc:confirm_stop"),
+            ],
+            [
+                InlineKeyboardButton("Перезапустить", callback_data="mc:confirm_restart"),
+                InlineKeyboardButton("Бэкапы", callback_data="mc:backups"),
+            ],
+            [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _backup_nav_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Назад к Minecraft", callback_data="nav:mc")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _manual_backup_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("manual-1", callback_data="mcm:manual-1"),
+                InlineKeyboardButton("manual-2", callback_data="mcm:manual-2"),
+            ],
+            [InlineKeyboardButton("manual-3", callback_data="mcm:manual-3")],
+            [InlineKeyboardButton("Назад", callback_data="nav:mc")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _stack_menu_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Статус стека", callback_data="stk:status")],
+            [InlineKeyboardButton("Запустить стек", callback_data="stk:start")],
+            [InlineKeyboardButton("Остановить стек", callback_data="stk:confirm_stop")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+async def _safe_edit_callback_message(
+    q: CallbackQuery,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> bool:
+    """Edit a callback message without losing the underlying long-running operation."""
+
+    try:
+        await q.edit_message_text(text, reply_markup=reply_markup)
+    except TelegramError:
+        log.warning("Could not edit Telegram callback message", exc_info=True)
+        return False
+    return True
+
+
+async def _safe_answer_callback(q: CallbackQuery) -> None:
+    """Acknowledge a callback without failing the actual operation."""
+
+    try:
+        await q.answer()
+    except TelegramError:
+        log.warning("Could not answer Telegram callback", exc_info=True)
 
 
 def _is_allowed(user_id: int | None, settings: AppSettings) -> bool:
@@ -87,6 +180,18 @@ def register_minecraft_handlers(
             _minecraft_callback_router(settings),
             pattern=r"^mcn:[A-Za-z0-9_-]+:\d+$",
         ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mc:[A-Za-z0-9_-]+$",
+        ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mcm:manual-[123]$",
+        ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^stk:[A-Za-z0-9_-]+$",
+        ),
     ]
 
 
@@ -106,7 +211,7 @@ def _mc_status_handler(settings: AppSettings) -> Handler:
         if code != 0:
             await msg.reply_text(f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}")
             return
-        await msg.reply_text(out.strip()[:3900])
+        await msg.reply_text(out.strip()[:3900], reply_markup=_minecraft_menu_markup())
 
     return handler
 
@@ -128,8 +233,8 @@ def _mc_service_handler(settings: AppSettings, action: str) -> Handler:
             return
         await msg.reply_text(f"Minecraft: отправляю systemctl {action}…")
         code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
-        tail = (out + "\n" + err).strip()[:3500]
-        await msg.reply_text(f"Код {code}\n{tail}")
+        tail = _tail_text(out + "\n" + err, max_len=3500)
+        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
 
     return handler
 
@@ -150,7 +255,10 @@ def _mc_players_handler(settings: AppSettings) -> Handler:
         if code != 0:
             await msg.reply_text(f"players count failed ({code}):\n{(err or out)[:1500]}")
             return
-        await msg.reply_text(f"Игроков онлайн (по RCON list): {out.strip()}")
+        await msg.reply_text(
+            f"Игроков онлайн (по RCON list): {out.strip()}",
+            reply_markup=_minecraft_menu_markup(),
+        )
 
     return handler
 
@@ -183,7 +291,9 @@ def _mc_backups_handler(settings: AppSettings) -> Handler:
             if not eid:
                 continue
             catalog.append((eid, label))
-            buttons.append([InlineKeyboardButton(f"↩ {label}", callback_data=f"mcs:{token}:{idx}")])
+            buttons.append([InlineKeyboardButton(label, callback_data=f"mcs:{token}:{idx}")])
+        buttons.append([InlineKeyboardButton("Назад", callback_data="nav:mc")])
+        buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
         uid = u.id if u else 0
         context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
         await msg.reply_text(
@@ -216,10 +326,353 @@ def _mc_backup_manual_handler(settings: AppSettings) -> Handler:
             remote,
             ["backup", "create", "--slot", slot, "--local"],
         )
-        tail = (out + "\n" + err).strip()[:3500]
-        await msg.reply_text(f"Код {code}\n{tail}")
+        tail = _tail_text(out + "\n" + err, max_len=3500)
+        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
 
     return handler
+
+
+async def _show_backup_catalog(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    remote: McopsRemoteSettings,
+) -> None:
+    """Render the backup list as inline buttons."""
+
+    await q.edit_message_text("Загружаю список бэкапов...")
+    code, rows = await _remote_json_lines(remote, ["backup", "list", "--local", "--json"])
+    if code != 0:
+        await q.edit_message_text(
+            "backup list: ошибка удалённого mcops.",
+            reply_markup=_backup_nav_markup(),
+        )
+        await _safe_answer_callback(q)
+        return
+    if not rows:
+        await q.edit_message_text(
+            "Бэкапы не найдены (пустой каталог или не настроен мод-путь).",
+            reply_markup=_backup_nav_markup(),
+        )
+        await _safe_answer_callback(q)
+        return
+
+    catalog: list[tuple[str, str]] = []
+    buttons: list[list[InlineKeyboardButton]] = []
+    token = secrets.token_urlsafe(6)
+    for idx, row in enumerate(rows[:20]):
+        eid = str(row.get("id") or "")
+        label = str(row.get("label") or eid)[:40]
+        if not eid:
+            continue
+        catalog.append((eid, label))
+        buttons.append([InlineKeyboardButton(label, callback_data=f"mcs:{token}:{idx}")])
+    buttons.append([InlineKeyboardButton("Назад", callback_data="nav:mc")])
+    buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
+    uid = q.from_user.id
+    context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
+    await q.edit_message_text(
+        "Последние бэкапы. Нажмите для подтверждения отката:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+    await _safe_answer_callback(q)
+
+
+async def _run_restore_with_progress(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    backup_id: str,
+) -> None:
+    """Run restore and keep Telegram updated while SSH command is running."""
+
+    task = asyncio.create_task(
+        run_remote_mcops(
+            remote,
+            [
+                "backup",
+                "restore",
+                backup_id,
+                "--local",
+                "--confirm-destructive",
+            ],
+        )
+    )
+    elapsed = 0
+    while not task.done():
+        await asyncio.sleep(10.0)
+        elapsed += 10
+        await _safe_edit_callback_message(
+            q,
+            "Restore выполняется.\n"
+            f"Бэкап: {backup_id}\n"
+            f"Прошло: {elapsed} сек.\n"
+            "Minecraft может долго сохраняться перед остановкой.",
+        )
+    code, out, err = await task
+    tail = _tail_text(out + "\n" + err, max_len=3500)
+    edited = await _safe_edit_callback_message(
+        q,
+        f"Restore завершён. Код {code}\n{tail}",
+        reply_markup=_backup_nav_markup(),
+    )
+    if not edited and q.message is not None:
+        await q.message.reply_text(
+            f"Restore завершён. Код {code}\n{tail}",
+            reply_markup=_backup_nav_markup(),
+        )
+
+
+async def _handle_minecraft_button(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    remote: McopsRemoteSettings,
+    action: str,
+) -> None:
+    """Execute Minecraft menu actions."""
+
+    if action == "status":
+        await q.edit_message_text("Minecraft: запрашиваю статус...")
+        code, out, err = await run_remote_mcops(remote, ["status", "--json"])
+        text = (
+            out.strip()[:3500]
+            if code == 0
+            else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
+        )
+        await q.edit_message_text(text, reply_markup=_minecraft_menu_markup())
+        await _safe_answer_callback(q)
+        return
+    if action == "players":
+        await q.edit_message_text("Minecraft: считаю игроков...")
+        code, out, err = await run_remote_mcops(remote, ["players", "count", "--local"])
+        text = (
+            f"Игроков онлайн (по RCON list): {out.strip()}"
+            if code == 0
+            else f"players count failed ({code}):\n{(err or out)[:1500]}"
+        )
+        await q.edit_message_text(text, reply_markup=_minecraft_menu_markup())
+        await _safe_answer_callback(q)
+        return
+    if action == "start":
+        await _run_minecraft_service_button(q, remote, "start")
+        return
+    if action == "confirm_stop":
+        await q.edit_message_text(
+            "Остановить Minecraft?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, остановить", callback_data="mc:do_stop"),
+                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "confirm_restart":
+        await q.edit_message_text(
+            "Перезапустить Minecraft?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, restart", callback_data="mc:do_restart"),
+                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "do_stop":
+        await _run_minecraft_service_button(q, remote, "stop")
+        return
+    if action == "do_restart":
+        await _run_minecraft_service_button(q, remote, "restart")
+        return
+    if action == "backups":
+        await _show_backup_catalog(q, context, remote)
+        return
+    if action == "manual_menu":
+        await q.edit_message_text(
+            "Выберите слот ручного бэкапа:",
+            reply_markup=_manual_backup_markup(),
+        )
+        await _safe_answer_callback(q)
+
+
+async def _run_minecraft_service_button(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    action: str,
+) -> None:
+    await q.edit_message_text(f"Minecraft: отправляю systemctl {action}...")
+    code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
+    tail = _tail_text(out + "\n" + err, max_len=3000)
+    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
+    await _safe_answer_callback(q)
+
+
+async def _handle_manual_backup_button(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    slot: str,
+) -> None:
+    await q.edit_message_text(f"Запускаю ручной бэкап слота {slot}...")
+    code, out, err = await run_remote_mcops(
+        remote,
+        ["backup", "create", "--slot", slot, "--local"],
+    )
+    tail = _tail_text(out + "\n" + err, max_len=3500)
+    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
+    await _safe_answer_callback(q)
+
+
+async def _handle_stack_button(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    remote: McopsRemoteSettings | None,
+    action: str,
+) -> None:
+    """Execute stack menu actions."""
+
+    regru = context.application.bot_data.get("regru")
+    if not isinstance(regru, RegRuClient):
+        await q.edit_message_text(
+            "Внутренняя ошибка: нет RegRuClient.",
+            reply_markup=_stack_menu_markup(),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "status":
+        await q.edit_message_text("Стек: запрашиваю статус...")
+        lines: list[str] = []
+        try:
+            payload = await regru.fetch_reglets()
+            detail = None
+            try:
+                one = await regru.fetch_reglet()
+                r = one.get("reglet") if isinstance(one, dict) else None
+                if isinstance(r, dict):
+                    detail = r
+            except RegRuClientError:
+                pass
+            lines.append(
+                format_reglet_telegram(
+                    payload,
+                    reglet_id=context.application.bot_data["settings"].reglet_id,
+                    reglet_detail=detail,
+                )
+            )
+        except RegRuClientError:
+            lines.append("VPS: панель недоступна.")
+        if remote is None:
+            lines.append("Minecraft: SSH не настроен.")
+        else:
+            code, out, err = await run_remote_mcops(remote, ["status", "--json"])
+            lines.append(f"Minecraft mcops status: код {code}")
+            lines.append(_tail_text(out or err, max_len=2200))
+        await q.edit_message_text("\n\n".join(lines)[:3900], reply_markup=_stack_menu_markup())
+        await _safe_answer_callback(q)
+        return
+    if remote is None:
+        await q.edit_message_text(
+            "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+            reply_markup=_stack_menu_markup(),
+        )
+        return
+    if action == "start":
+        await q.edit_message_text("Запускаю VPS, затем дождусь SSH и стартану Minecraft...")
+        try:
+            await regru.post_reglet_action(RegletAction.START)
+        except RegRuClientError:
+            await q.edit_message_text(
+                "Панель недоступна при запуске VPS.",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        for attempt in range(60):
+            code, _out, _err = await run_remote_mcops(remote, ["status", "--json"])
+            if code == 0:
+                break
+            if attempt % 6 == 0:
+                await q.edit_message_text(f"Жду SSH до хоста Minecraft... {attempt * 5} сек")
+            await asyncio.sleep(5.0)
+        else:
+            await q.edit_message_text(
+                "SSH так и не ответил. Проверьте сеть/VPS вручную.",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        code, out, err = await run_remote_mcops(remote, ["service", "start", "--local"])
+        tail = _tail_text(out + "\n" + err, max_len=2500)
+        await q.edit_message_text(
+            f"stack_start: service start код {code}\n{tail}",
+            reply_markup=_stack_menu_markup(),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "confirm_stop":
+        await q.edit_message_text(
+            "Остановить Minecraft, затем VPS?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, остановить стек", callback_data="stk:do_stop"),
+                        InlineKeyboardButton("Назад", callback_data="nav:stack"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        await _safe_answer_callback(q)
+        return
+    if action == "do_stop":
+        await q.edit_message_text("Останавливаю Minecraft...")
+        code, out, err = await run_remote_mcops(remote, ["service", "stop", "--local"])
+        if code != 0:
+            tail = _tail_text(out + "\n" + err, max_len=2500)
+            await q.edit_message_text(
+                f"VPS не останавливаю: Minecraft stop завершился с ошибкой.\nКод {code}\n{tail}",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        status_code, status_out, status_err = await run_remote_mcops(remote, ["status", "--json"])
+        if status_code != 0:
+            await q.edit_message_text(
+                "VPS не останавливаю: не удалось проверить статус Minecraft после stop.\n"
+                f"{_tail_text(status_err or status_out, max_len=1500)}",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        try:
+            status_root = json.loads(status_out)
+        except json.JSONDecodeError:
+            await q.edit_message_text(
+                "VPS не останавливаю: mcops status вернул не-JSON.",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        if status_root.get("phase") != "stopped":
+            await q.edit_message_text(
+                "VPS не останавливаю: Minecraft не выглядит остановленным "
+                f"(phase={status_root.get('phase')}).",
+                reply_markup=_stack_menu_markup(),
+            )
+            await _safe_answer_callback(q)
+            return
+        await q.edit_message_text("Minecraft остановлен. Останавливаю VPS...")
+        try:
+            text = await regru.post_reglet_action(RegletAction.STOP)
+        except RegRuClientError:
+            text = "Панель недоступна при остановке VPS."
+        await q.edit_message_text(text, reply_markup=_stack_menu_markup())
+        await _safe_answer_callback(q)
 
 
 def _minecraft_callback_router(settings: AppSettings) -> Handler:
@@ -231,15 +684,32 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
         if not _is_allowed(u.id if u else None, settings):
             await q.answer("Нет доступа.", show_alert=True)
             return
+        await _safe_answer_callback(q)
         remote = _require_remote(settings)
-        if remote is None:
-            await q.answer("SSH не настроен.", show_alert=True)
-            return
-        uid = u.id
         catalog_map: dict[str, list[tuple[str, str]]] = context.application.bot_data.get(
             _BACKUP_CATALOG_KEY,
             {},
         )
+
+        if (m := _CALLBACK_STACK.match(q.data)) is not None:
+            await _handle_stack_button(q, context, remote, m.group(1))
+            return
+
+        if remote is None:
+            await q.edit_message_text(
+                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                reply_markup=_minecraft_menu_markup(),
+            )
+            return
+        uid = u.id
+
+        if (m := _CALLBACK_MC.match(q.data)) is not None:
+            await _handle_minecraft_button(q, context, remote, m.group(1))
+            return
+
+        if (m := _CALLBACK_MANUAL.match(q.data)) is not None:
+            await _handle_manual_backup_button(q, remote, m.group(1))
+            return
 
         if (m := _CALLBACK_PICK.match(q.data)) is not None:
             token = m.group(1)
@@ -254,7 +724,9 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
                     [
                         InlineKeyboardButton("Да, откатить", callback_data=f"mcy:{token}:{idx}"),
                         InlineKeyboardButton("Отмена", callback_data=f"mcn:{token}:{idx}"),
-                    ]
+                    ],
+                    [InlineKeyboardButton("Назад", callback_data="mc:backups")],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             )
             extra = label.strip() if label.strip() != eid.strip() else ""
@@ -263,12 +735,12 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
                 text=confirm_body,
                 reply_markup=kb,
             )
-            await q.answer()
+            await _safe_answer_callback(q)
             return
 
         if (m := _CALLBACK_NO.match(q.data)) is not None:
-            await q.edit_message_text(text="Откат отменён.")
-            await q.answer()
+            await q.edit_message_text(text="Откат отменён.", reply_markup=_backup_nav_markup())
+            await _safe_answer_callback(q)
             return
 
         if (m := _CALLBACK_GO.match(q.data)) is not None:
@@ -279,21 +751,14 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
                 await q.answer("Список устарел.", show_alert=True)
                 return
             eid, _label = catalog[idx]
-            await q.edit_message_text(text=f"Запускаю restore для:\n{eid}")
-            await q.answer()
-            code, out, err = await run_remote_mcops(
-                remote,
-                [
-                    "backup",
-                    "restore",
-                    eid,
-                    "--local",
-                    "--confirm-destructive",
-                ],
+            await q.edit_message_text(
+                text=(
+                    f"Запускаю restore для:\n{eid}\n\n"
+                    "Буду обновлять это сообщение, пока команда выполняется."
+                )
             )
-            tail = (out + "\n" + err).strip()[:3500]
-            if q.message:
-                await q.message.reply_text(f"Код {code}\n{tail}")
+            await _safe_answer_callback(q)
+            await _run_restore_with_progress(q, remote, eid)
             return
 
     return handler
@@ -338,7 +803,7 @@ def _stack_status_handler(settings: AppSettings) -> Handler:
             code, out, err = await run_remote_mcops(remote, ["status", "--json"])
             lines.append(f"Minecraft mcops status: код {code}")
             lines.append((out or err).strip()[:2500])
-        await msg.reply_text("\n\n".join(lines))
+        await msg.reply_text("\n\n".join(lines), reply_markup=_stack_menu_markup())
 
     return handler
 
@@ -376,8 +841,11 @@ def _stack_start_handler(settings: AppSettings) -> Handler:
             return
         await msg.reply_text("SSH доступен. Запускаю Minecraft сервис…")
         code, out, err = await run_remote_mcops(remote, ["service", "start", "--local"])
-        tail = (out + "\n" + err).strip()[:2500]
-        await msg.reply_text(f"stack_start: service start код {code}\n{tail}")
+        tail = _tail_text(out + "\n" + err, max_len=2500)
+        await msg.reply_text(
+            f"stack_start: service start код {code}\n{tail}",
+            reply_markup=_stack_menu_markup(),
+        )
 
     return handler
 
@@ -403,7 +871,7 @@ def _stack_stop_handler(settings: AppSettings) -> Handler:
             return
         await msg.reply_text("Останавливаю Minecraft…")
         code, out, err = await run_remote_mcops(remote, ["service", "stop", "--local"])
-        tail = (out + "\n" + err).strip()[:2000]
+        tail = _tail_text(out + "\n" + err, max_len=2000)
         await msg.reply_text(f"Minecraft stop: код {code}\n{tail}")
         if code != 0:
             await msg.reply_text("VPS не останавливаю: Minecraft stop завершился с ошибкой.")
@@ -432,6 +900,9 @@ def _stack_stop_handler(settings: AppSettings) -> Handler:
         except RegRuClientError:
             await msg.reply_text("Панель недоступна при остановке VPS.")
             return
-        await msg.reply_text("Запрос на остановку VPS отправлен.")
+        await msg.reply_text(
+            "Запрос на остановку VPS отправлен.",
+            reply_markup=_stack_menu_markup(),
+        )
 
     return handler

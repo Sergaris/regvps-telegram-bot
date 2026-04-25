@@ -3,8 +3,8 @@
 import logging
 from collections.abc import Awaitable, Callable
 
-from telegram import Update
-from telegram.error import NetworkError, TimedOut
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, Defaults
 
 from vps_telegram_bot.config import AppSettings
@@ -27,6 +27,87 @@ _TG_NET_FAIL_RU = (
     "Не удалось связаться с Telegram (таймаут/сеть). "
     "Проверьте интернет и прокси (HTTP(S)_PROXY, NO_PROXY) и повторите команду."
 )
+
+
+def _home_menu_markup() -> InlineKeyboardMarkup:
+    """Главное меню бота."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("VPS", callback_data="nav:vps"),
+                InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
+            ],
+            [
+                InlineKeyboardButton("Стек", callback_data="nav:stack"),
+                InlineKeyboardButton("Справка", callback_data="nav:help"),
+            ],
+        ]
+    )
+
+
+def _vps_menu_markup() -> InlineKeyboardMarkup:
+    """Меню действий с Reg.ru VPS."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Статус", callback_data="vps:info"),
+                InlineKeyboardButton("Баланс", callback_data="vps:balance"),
+            ],
+            [InlineKeyboardButton("Запустить VPS", callback_data="vps:start")],
+            [
+                InlineKeyboardButton("Остановить", callback_data="vps:confirm_stop"),
+                InlineKeyboardButton("Перезагрузить", callback_data="vps:confirm_reboot"),
+            ],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _minecraft_menu_markup() -> InlineKeyboardMarkup:
+    """Меню действий с Minecraft-сервисом."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Статус", callback_data="mc:status"),
+                InlineKeyboardButton("Игроки", callback_data="mc:players"),
+            ],
+            [
+                InlineKeyboardButton("Запустить", callback_data="mc:start"),
+                InlineKeyboardButton("Остановить", callback_data="mc:confirm_stop"),
+            ],
+            [
+                InlineKeyboardButton("Перезапустить", callback_data="mc:confirm_restart"),
+                InlineKeyboardButton("Бэкапы", callback_data="mc:backups"),
+            ],
+            [InlineKeyboardButton("Ручной бэкап", callback_data="mc:manual_menu")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _stack_menu_markup() -> InlineKeyboardMarkup:
+    """Меню действий со всем стеком VPS + Minecraft."""
+
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Статус стека", callback_data="stk:status")],
+            [InlineKeyboardButton("Запустить стек", callback_data="stk:start")],
+            [InlineKeyboardButton("Остановить стек", callback_data="stk:confirm_stop")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+async def _safe_answer_callback(q: CallbackQuery) -> None:
+    """Acknowledge a callback without failing the actual operation."""
+
+    try:
+        await q.answer()
+    except TelegramError:
+        log.warning("Could not answer Telegram callback", exc_info=True)
 
 
 def _is_allowed(effective_user_id: int, settings: AppSettings) -> bool:
@@ -200,6 +281,10 @@ def _handler_list(
         CommandHandler("vps_start", _wrap(RegletAction.START), block=False),
         CommandHandler("vps_stop", _wrap(RegletAction.STOP), block=False),
         CommandHandler("vps_reboot", _wrap(RegletAction.REBOOT), block=False),
+        CallbackQueryHandler(
+            _menu_callback_router(settings),
+            pattern=r"^(nav|vps):[A-Za-z0-9_-]+$",
+        ),
     ]
     base.extend(register_minecraft_handlers(settings))
     return base
@@ -210,6 +295,138 @@ def _post_shutdown_regru(regru: RegRuClient) -> Callable[[Application], Awaitabl
         await regru.aclose()
 
     return _inner
+
+
+def _menu_callback_router(settings: AppSettings) -> Handler:
+    """Route top-level navigation and VPS button actions."""
+
+    async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
+        if q is None or q.data is None:
+            return
+        u = q.from_user
+        if u is None or not _is_allowed(u.id, settings):
+            await q.answer("Нет доступа.", show_alert=True)
+            return
+
+        await _safe_answer_callback(q)
+        data = q.data
+        if data == "nav:home":
+            await q.edit_message_text("Главное меню", reply_markup=_home_menu_markup())
+            return
+        if data == "nav:vps":
+            await q.edit_message_text("VPS: выберите действие", reply_markup=_vps_menu_markup())
+            return
+        if data == "nav:help":
+            await q.edit_message_text(_long_help_ru(), reply_markup=_home_menu_markup())
+            return
+        if data == "nav:mc":
+            await q.edit_message_text(
+                "Minecraft: выберите действие",
+                reply_markup=_minecraft_menu_markup(),
+            )
+            return
+        if data == "nav:stack":
+            await q.edit_message_text("Стек: выберите действие", reply_markup=_stack_menu_markup())
+            return
+
+        if data.startswith("vps:"):
+            await _handle_vps_button(q, context, data)
+
+    return handler
+
+
+async def _handle_vps_button(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+    data: str,
+) -> None:
+    """Execute a VPS action from an inline button."""
+
+    regru = _reg_client(context)
+    if data == "vps:info":
+        await q.edit_message_text("VPS: запрашиваю статус...", reply_markup=_vps_menu_markup())
+        try:
+            payload = await regru.fetch_reglets()
+            reglet_detail = None
+            try:
+                one = await regru.fetch_reglet()
+                r = one.get("reglet") if isinstance(one, dict) else None
+                if isinstance(r, dict):
+                    reglet_detail = r
+            except RegRuClientError:
+                pass
+            text = format_reglet_telegram(
+                payload,
+                reglet_id=context.application.bot_data["settings"].reglet_id,
+                reglet_detail=reglet_detail,
+            )
+        except RegRuClientError:
+            log.exception("fetch reglets failed from button")
+            text = "Панель недоступна или отклонила запрос. Повторите позже."
+        await q.edit_message_text(text, reply_markup=_vps_menu_markup())
+        return
+    if data == "vps:balance":
+        await q.edit_message_text("VPS: запрашиваю баланс...", reply_markup=_vps_menu_markup())
+        try:
+            text = format_balance_telegram(await regru.fetch_balance_data())
+        except RegRuClientError:
+            log.exception("fetch balance_data failed from button")
+            text = "Панель недоступна или отклонила запрос. Повторите позже."
+        await q.edit_message_text(text, reply_markup=_vps_menu_markup())
+        return
+    if data == "vps:start":
+        await _post_vps_button_action(q, regru, RegletAction.START)
+        return
+    if data == "vps:confirm_stop":
+        await q.edit_message_text(
+            "Остановить VPS?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
+                        InlineKeyboardButton("Назад", callback_data="nav:vps"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        return
+    if data == "vps:confirm_reboot":
+        await q.edit_message_text(
+            "Перезагрузить VPS?",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
+                        InlineKeyboardButton("Назад", callback_data="nav:vps"),
+                    ],
+                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
+                ]
+            ),
+        )
+        return
+    if data == "vps:do_stop":
+        await _post_vps_button_action(q, regru, RegletAction.STOP)
+        return
+    if data == "vps:do_reboot":
+        await _post_vps_button_action(q, regru, RegletAction.REBOOT)
+
+
+async def _post_vps_button_action(
+    q: CallbackQuery,
+    regru: RegRuClient,
+    action: RegletAction,
+) -> None:
+    """Post a Reg.ru action and keep the VPS menu attached."""
+
+    await q.edit_message_text(f"VPS: отправляю {action.value}...", reply_markup=_vps_menu_markup())
+    try:
+        text = await regru.post_reglet_action(action)
+    except RegRuClientError:
+        log.exception("reglet action failed from button: %s", action)
+        text = "Панель недоступна или отклонила запрос. Повторите позже."
+    await q.edit_message_text(text, reply_markup=_vps_menu_markup())
 
 
 def _help_text_handler(
@@ -223,7 +440,7 @@ def _help_text_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text(_long_help_ru())
+        await m.reply_text(_long_help_ru(), reply_markup=_home_menu_markup())
 
     return handler
 
@@ -243,7 +460,7 @@ def _full_help_handler(
             return
         text = _full_help_ru(settings)
         if len(text) <= 4096:
-            await m.reply_text(text)
+            await m.reply_text(text, reply_markup=_home_menu_markup())
             return
         for chunk in _split_telegram_message_chunks(text, max_len=4000):
             await m.reply_text(chunk)
@@ -280,13 +497,14 @@ def _vps_command_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text(_vps_list_ru())
+        await m.reply_text("VPS: выберите действие", reply_markup=_vps_menu_markup())
 
     return handler
 
 
 def _long_help_ru() -> str:
     return (
+        "Кнопочное меню: /start. Через него доступны VPS, Minecraft, стек и справка.\n"
         "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, "
         "/vps_stop confirm, /vps_reboot confirm.\n"
         "Minecraft (через SSH mcops, если заданы MCOPS_SSH_*): "
@@ -305,9 +523,9 @@ def _full_help_ru(settings: AppSettings) -> str:
         "Справка по командам бота",
         "",
         "Общее",
-        "/start — краткое приветствие и перечень команд.",
+        "/start — главное кнопочное меню.",
         "/help — эта справка: все команды и что они делают.",
-        "/vps — короткий список команд без пояснений.",
+        "/vps — кнопочное меню VPS.",
         "",
         "VPS (Reg.ru CloudVPS, API reglet)",
         "/vps_info — статус виртуалки, IP, регион, тариф, диск, образ, последняя операция "
