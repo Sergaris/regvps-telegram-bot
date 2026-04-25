@@ -6,6 +6,7 @@ import logging
 import re
 import secrets
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -26,7 +27,9 @@ _CALLBACK_GO = re.compile(r"^mcy:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_NO = re.compile(r"^mcn:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_MC = re.compile(r"^mc:([A-Za-z0-9_-]+)$")
 _CALLBACK_MANUAL = re.compile(r"^mcm:(manual-[123])$")
+_CALLBACK_MANUAL_GO = re.compile(r"^mcmy:(manual-[123])$")
 _CALLBACK_STACK = re.compile(r"^stk:([A-Za-z0-9_-]+)$")
+_MANUAL_BACKUP_RE = re.compile(r"^tar:worlds-manual-(manual-[123])-.+\.(?:tar\.gz|tgz)$")
 
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
@@ -71,15 +74,30 @@ def _backup_nav_markup() -> InlineKeyboardMarkup:
     )
 
 
-def _manual_backup_markup() -> InlineKeyboardMarkup:
+def _manual_backup_markup(
+    rows: list[dict[str, Any]] | None = None,
+) -> InlineKeyboardMarkup:
+    slots = _manual_slot_labels(rows or [])
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("manual-1", callback_data="mcm:manual-1"),
-                InlineKeyboardButton("manual-2", callback_data="mcm:manual-2"),
+                InlineKeyboardButton(slots["manual-1"], callback_data="mcm:manual-1"),
+                InlineKeyboardButton(slots["manual-2"], callback_data="mcm:manual-2"),
             ],
-            [InlineKeyboardButton("manual-3", callback_data="mcm:manual-3")],
+            [InlineKeyboardButton(slots["manual-3"], callback_data="mcm:manual-3")],
             [InlineKeyboardButton("Назад", callback_data="nav:mc")],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def _manual_overwrite_confirm_markup(slot: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Да, перезаписать", callback_data=f"mcmy:{slot}"),
+                InlineKeyboardButton("Назад", callback_data="mc:manual_menu"),
+            ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -119,6 +137,69 @@ async def _safe_answer_callback(q: CallbackQuery) -> None:
         await q.answer()
     except TelegramError:
         log.warning("Could not answer Telegram callback", exc_info=True)
+
+
+def _manual_slot_labels(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Build button labels showing whether each manual backup slot is occupied."""
+
+    labels = {slot: f"{slot}: пусто" for slot in ("manual-1", "manual-2", "manual-3")}
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slot_value = str(row.get("slot") or "")
+        if slot_value in labels:
+            if bool(row.get("occupied")):
+                labels[slot_value] = (
+                    f"{slot_value}: занят ({_format_backup_mtime(_row_mtime(row))})"
+                )
+            continue
+        entry_id = str(row.get("id") or "")
+        match = _MANUAL_BACKUP_RE.match(entry_id)
+        if match is None:
+            continue
+        slot = match.group(1)
+        previous = latest.get(slot)
+        if previous is None or _row_mtime(row) > _row_mtime(previous):
+            latest[slot] = row
+    for slot, row in latest.items():
+        labels[slot] = f"{slot}: занят ({_format_backup_mtime(_row_mtime(row))})"
+    return labels
+
+
+def _row_mtime(row: dict[str, Any]) -> float:
+    value = row.get("mtime")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    try:
+        return float(str(value or "0"))
+    except ValueError:
+        return 0.0
+
+
+def _format_backup_mtime(mtime: float) -> str:
+    if mtime <= 0:
+        return "дата неизвестна"
+    return datetime.fromtimestamp(mtime).strftime("%d.%m %H:%M")
+
+
+async def _manual_backup_markup_from_remote(remote: McopsRemoteSettings) -> InlineKeyboardMarkup:
+    """Fetch current backup catalog and build manual slot buttons."""
+
+    rows = await _manual_slot_rows_from_remote(remote)
+    return _manual_backup_markup(rows)
+
+
+async def _manual_slot_rows_from_remote(remote: McopsRemoteSettings) -> list[dict[str, Any]]:
+    """Fetch manual slot status rows from the remote host."""
+
+    code, rows = await _remote_json_lines(remote, ["backup", "manual-slots", "--local", "--json"])
+    return rows if code == 0 else []
+
+
+def _is_manual_slot_occupied(rows: list[dict[str, Any]], slot: str) -> bool:
+    for row in rows:
+        if str(row.get("slot") or "") == slot:
+            return bool(row.get("occupied"))
+    return False
 
 
 def _is_allowed(user_id: int | None, settings: AppSettings) -> bool:
@@ -187,6 +268,10 @@ def register_minecraft_handlers(
         CallbackQueryHandler(
             _minecraft_callback_router(settings),
             pattern=r"^mcm:manual-[123]$",
+        ),
+        CallbackQueryHandler(
+            _minecraft_callback_router(settings),
+            pattern=r"^mcmy:manual-[123]$",
         ),
         CallbackQueryHandler(
             _minecraft_callback_router(settings),
@@ -318,16 +403,29 @@ def _mc_backup_manual_handler(settings: AppSettings) -> Handler:
             return
         args = context.args or []
         if len(args) != 1 or args[0] not in {"manual-1", "manual-2", "manual-3"}:
-            await msg.reply_text("Использование: /mc_backup_manual manual-1|manual-2|manual-3")
+            await msg.reply_text(
+                "Выберите слот ручного бэкапа:",
+                reply_markup=await _manual_backup_markup_from_remote(remote),
+            )
             return
         slot = args[0]
+        rows = await _manual_slot_rows_from_remote(remote)
+        if _is_manual_slot_occupied(rows, slot):
+            await msg.reply_text(
+                f"Слот {slot} уже занят. Перезаписать его новым ручным бэкапом?",
+                reply_markup=_manual_overwrite_confirm_markup(slot),
+            )
+            return
         await msg.reply_text(f"Запускаю ручной бэкап слота {slot}…")
         code, out, err = await run_remote_mcops(
             remote,
             ["backup", "create", "--slot", slot, "--local"],
         )
         tail = _tail_text(out + "\n" + err, max_len=3500)
-        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
+        await msg.reply_text(
+            f"Код {code}\n{tail}",
+            reply_markup=await _manual_backup_markup_from_remote(remote),
+        )
 
     return handler
 
@@ -377,6 +475,17 @@ async def _show_backup_catalog(
     await _safe_answer_callback(q)
 
 
+async def _show_manual_backup_slots(q: CallbackQuery, remote: McopsRemoteSettings) -> None:
+    """Render manual backup slots with occupied/free state."""
+
+    await q.edit_message_text("Проверяю ручные слоты бэкапов...")
+    await q.edit_message_text(
+        "Ручные слоты. Нажмите слот, чтобы перезаписать его новым tar-бэкапом:",
+        reply_markup=await _manual_backup_markup_from_remote(remote),
+    )
+    await _safe_answer_callback(q)
+
+
 async def _run_restore_with_progress(
     q: CallbackQuery,
     remote: McopsRemoteSettings,
@@ -418,6 +527,45 @@ async def _run_restore_with_progress(
         await q.message.reply_text(
             f"Restore завершён. Код {code}\n{tail}",
             reply_markup=_backup_nav_markup(),
+        )
+
+
+async def _run_manual_backup_with_progress(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    slot: str,
+) -> None:
+    """Run manual backup and keep Telegram updated while SSH command is running."""
+
+    task = asyncio.create_task(
+        run_remote_mcops(
+            remote,
+            ["backup", "create", "--slot", slot, "--local"],
+        )
+    )
+    elapsed = 0
+    while not task.done():
+        await asyncio.sleep(10.0)
+        elapsed += 10
+        await _safe_edit_callback_message(
+            q,
+            "Ручной бэкап выполняется.\n"
+            f"Слот: {slot}\n"
+            f"Прошло: {elapsed} сек.\n"
+            "Minecraft останавливается на время архивации мира.",
+        )
+    code, out, err = await task
+    tail = _tail_text(out + "\n" + err, max_len=3500)
+    markup = await _manual_backup_markup_from_remote(remote)
+    edited = await _safe_edit_callback_message(
+        q,
+        f"Ручной бэкап завершён. Код {code}\n{tail}",
+        reply_markup=markup,
+    )
+    if not edited and q.message is not None:
+        await q.message.reply_text(
+            f"Ручной бэкап завершён. Код {code}\n{tail}",
+            reply_markup=markup,
         )
 
 
@@ -494,11 +642,7 @@ async def _handle_minecraft_button(
         await _show_backup_catalog(q, context, remote)
         return
     if action == "manual_menu":
-        await q.edit_message_text(
-            "Выберите слот ручного бэкапа:",
-            reply_markup=_manual_backup_markup(),
-        )
-        await _safe_answer_callback(q)
+        await _show_manual_backup_slots(q, remote)
 
 
 async def _run_minecraft_service_button(
@@ -518,14 +662,28 @@ async def _handle_manual_backup_button(
     remote: McopsRemoteSettings,
     slot: str,
 ) -> None:
-    await q.edit_message_text(f"Запускаю ручной бэкап слота {slot}...")
-    code, out, err = await run_remote_mcops(
-        remote,
-        ["backup", "create", "--slot", slot, "--local"],
+    rows = await _manual_slot_rows_from_remote(remote)
+    if _is_manual_slot_occupied(rows, slot):
+        await q.edit_message_text(
+            f"Слот {slot} уже занят. Перезаписать его новым ручным бэкапом?",
+            reply_markup=_manual_overwrite_confirm_markup(slot),
+        )
+        await _safe_answer_callback(q)
+        return
+    await _start_manual_backup_button(q, remote, slot)
+
+
+async def _start_manual_backup_button(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    slot: str,
+) -> None:
+    await q.edit_message_text(
+        f"Запускаю ручной бэкап слота {slot}.\n"
+        "Буду обновлять это сообщение, пока команда выполняется."
     )
-    tail = _tail_text(out + "\n" + err, max_len=3500)
-    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=_minecraft_menu_markup())
     await _safe_answer_callback(q)
+    await _run_manual_backup_with_progress(q, remote, slot)
 
 
 async def _handle_stack_button(
@@ -572,6 +730,7 @@ async def _handle_stack_button(
             code, out, err = await run_remote_mcops(remote, ["status", "--json"])
             lines.append(f"Minecraft mcops status: код {code}")
             lines.append(_tail_text(out or err, max_len=2200))
+            await _append_watchdog_status(lines, remote)
         await q.edit_message_text("\n\n".join(lines)[:3900], reply_markup=_stack_menu_markup())
         await _safe_answer_callback(q)
         return
@@ -711,6 +870,10 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             await _handle_manual_backup_button(q, remote, m.group(1))
             return
 
+        if (m := _CALLBACK_MANUAL_GO.match(q.data)) is not None:
+            await _start_manual_backup_button(q, remote, m.group(1))
+            return
+
         if (m := _CALLBACK_PICK.match(q.data)) is not None:
             token = m.group(1)
             idx = int(m.group(2))
@@ -764,6 +927,17 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
     return handler
 
 
+async def _append_watchdog_status(lines: list[str], remote: McopsRemoteSettings) -> None:
+    """Append local VPS watchdog state to a stack status response."""
+
+    code, out, err = await run_remote_mcops(remote, ["watchdog", "status", "--local", "--json"])
+    lines.append(f"Watchdog: код {code}")
+    if code != 0:
+        lines.append(_tail_text(err or out, max_len=1200))
+        return
+    lines.append(_tail_text(out, max_len=1600))
+
+
 def _stack_status_handler(settings: AppSettings) -> Handler:
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message
@@ -803,6 +977,7 @@ def _stack_status_handler(settings: AppSettings) -> Handler:
             code, out, err = await run_remote_mcops(remote, ["status", "--json"])
             lines.append(f"Minecraft mcops status: код {code}")
             lines.append((out or err).strip()[:2500])
+            await _append_watchdog_status(lines, remote)
         await msg.reply_text("\n\n".join(lines), reply_markup=_stack_menu_markup())
 
     return handler
