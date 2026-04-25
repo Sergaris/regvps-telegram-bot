@@ -18,7 +18,11 @@ _ENV_KEY_TG_POOL = "TELEGRAM_HTTP_POOL_TIMEOUT_SEC"
 
 @dataclass(slots=True, frozen=True, kw_only=True)
 class McopsRemoteSettings:
-    """SSH-доступ к хосту Minecraft для вызова ``mcops`` CLI."""
+    """SSH-доступ к хосту Minecraft для вызова ``mcops`` CLI.
+
+    Можно задать только ключ, только пароль или оба: при двух значениях
+    ``run_remote_mcops`` сначала пробует ключ, затем пароль при сбое SSH.
+    """
 
     host: str
     user: str
@@ -140,11 +144,11 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
     if not user:
         msg = "MCOPS_SSH_HOST set but MCOPS_SSH_USER is empty"
         raise ValueError(msg)
-    if identity and password:
-        msg = "Set either MCOPS_SSH_IDENTITY_FILE or MCOPS_SSH_PASSWORD, not both"
-        raise ValueError(msg)
     if not identity and not password:
-        msg = "MCOPS_SSH_HOST set but neither MCOPS_SSH_IDENTITY_FILE nor MCOPS_SSH_PASSWORD is set"
+        msg = (
+            "MCOPS_SSH_HOST set but neither MCOPS_SSH_IDENTITY_FILE nor MCOPS_SSH_PASSWORD is set "
+            "(можно задать оба: сначала ключ, при ошибке SSH — пароль)"
+        )
         raise ValueError(msg)
     path: Path | None = None
     if identity:

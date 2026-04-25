@@ -37,7 +37,7 @@ pip install -e ".[dev]"
 | `MCOPS_SSH_HOST` | Опционально: хост Minecraft для вызова `mcops` по SSH (`/mc_*`, `/stack_*`). |
 | `MCOPS_SSH_USER` | SSH-пользователь на хосте Minecraft (обязателен, если задан `MCOPS_SSH_HOST`). |
 | `MCOPS_SSH_IDENTITY_FILE` | Путь к **приватному** ключу SSH (файл должен существовать). |
-| `MCOPS_SSH_PASSWORD` | Альтернатива ключу: пароль SSH (в env, не в репозиторий). Задайте **либо** ключ, **либо** пароль, не оба. |
+| `MCOPS_SSH_PASSWORD` | Пароль SSH (в env). Можно задать **вместе с** `MCOPS_SSH_IDENTITY_FILE`: тогда сначала ключ (`ssh -i`), при типичном сбое SSH — пароль через AsyncSSH без проверки `known_hosts` (удобно после смены host key, но хуже против MITM). Только пароль — тоже без проверки host key. |
 | `MCOPS_SSH_PORT` | Опционально, по умолчанию `22`. |
 | `MCOPS_SSH_REMOTE_CWD` | Опционально, каталог репо ops на сервере, по умолчанию `/opt/minecraft/ops`. |
 | `MCOPS_SSH_REMOTE_PYTHON` | Опционально, интерпретатор на сервере, по умолчанию `python3`. |

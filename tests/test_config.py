@@ -137,24 +137,26 @@ def test_from_environ_mcops_ssh_password_ok() -> None:
     assert s.mcops_remote.ssh_password == "s3cret"
 
 
-def test_from_environ_mcops_ssh_both_key_and_password_raises(tmp_path: Path) -> None:
-    """Ключ и пароль одновременно — ошибка."""
+def test_from_environ_mcops_ssh_key_and_password_both_allowed(tmp_path: Path) -> None:
+    """Ключ и пароль одновременно: допустимо (сначала ключ, при сбое SSH — пароль)."""
 
     key = tmp_path / "id_ed25519"
     key.write_text("not-a-real-key", encoding="utf-8")
-    with pytest.raises(ValueError, match="not both"):
-        from_environ(
-            {
-                "REGRU_CLOUDVPS_TOKEN": "a",
-                "REGRU_REGLET_ID": "1",
-                "TELEGRAM_BOT_TOKEN": "b",
-                "TELEGRAM_ALLOWED_USER_IDS": "1",
-                "MCOPS_SSH_HOST": "example.org",
-                "MCOPS_SSH_USER": "ops",
-                "MCOPS_SSH_IDENTITY_FILE": str(key),
-                "MCOPS_SSH_PASSWORD": "x",
-            }
-        )
+    s = from_environ(
+        {
+            "REGRU_CLOUDVPS_TOKEN": "a",
+            "REGRU_REGLET_ID": "1",
+            "TELEGRAM_BOT_TOKEN": "b",
+            "TELEGRAM_ALLOWED_USER_IDS": "1",
+            "MCOPS_SSH_HOST": "example.org",
+            "MCOPS_SSH_USER": "ops",
+            "MCOPS_SSH_IDENTITY_FILE": str(key),
+            "MCOPS_SSH_PASSWORD": "x",
+        }
+    )
+    assert s.mcops_remote is not None
+    assert s.mcops_remote.identity_file == str(key)
+    assert s.mcops_remote.ssh_password == "x"
 
 
 def test_from_environ_mcops_ssh_no_identity_or_password_raises() -> None:
