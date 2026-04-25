@@ -38,10 +38,6 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("VPS", callback_data="nav:vps"),
                 InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
             ],
-            [
-                InlineKeyboardButton("Стек", callback_data="nav:stack"),
-                InlineKeyboardButton("Справка", callback_data="nav:help"),
-            ],
         ]
     )
 
@@ -318,7 +314,14 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await q.edit_message_text("VPS: выберите действие", reply_markup=_vps_menu_markup())
             return
         if data == "nav:help":
-            await q.edit_message_text(_long_help_ru(), reply_markup=_home_menu_markup())
+            help_text = _full_help_ru(settings)
+            if len(help_text) <= 4096:
+                await q.edit_message_text(help_text, reply_markup=_home_menu_markup())
+            else:
+                await q.edit_message_text(
+                    "Полный список команд не влезает в одно сообщение. Отправьте /help",
+                    reply_markup=_home_menu_markup(),
+                )
             return
         if data == "nav:mc":
             await q.edit_message_text(
@@ -440,7 +443,7 @@ def _help_text_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text(_long_help_ru(), reply_markup=_home_menu_markup())
+        await m.reply_text(_start_brief_ru(), reply_markup=_home_menu_markup())
 
     return handler
 
@@ -502,17 +505,17 @@ def _vps_command_handler(
     return handler
 
 
-def _long_help_ru() -> str:
+def _start_brief_ru() -> str:
+    """Короткое приветствие для ``/start``: только смысл кнопок главного меню."""
+
     return (
-        "Кнопочное меню: /start. Через него доступны VPS, Minecraft, стек и справка.\n"
-        "Reg.ru CloudVPS: /vps_info, /vps_balance, /vps_start, "
-        "/vps_stop confirm, /vps_reboot confirm.\n"
-        "Minecraft (через SSH mcops, если заданы MCOPS_SSH_*): "
-        "/mc_status, /mc_start, /mc_stop confirm, /mc_restart confirm, /mc_players, /mc_backups, "
-        "/mc_backup_manual <manual-1|manual-2|manual-3>.\n"
-        "Стек: /stack_status, /stack_start, /stack_stop confirm.\n"
-        "Команда /vps — короткий перечень. Полное описание: /help.\n"
-        "Не кладите бота на тот же VPS, которым он управляет."
+        "Главное меню внизу — две кнопки:\n"
+        "• VPS — виртуалка в Reg.ru: статус, баланс, запуск, остановка, перезагрузка.\n"
+        "• Minecraft — сервис на хосте (по SSH): статус, игроки, старт/стоп, бэкапы.\n"
+        "\n"
+        "Полный список команд: /help. Кратко по командам VPS: /vps.\n"
+        "Не запускайте бота на той же машине, которой он управляет — иначе после stop "
+        "бот тоже отключится."
     )
 
 
@@ -523,7 +526,7 @@ def _full_help_ru(settings: AppSettings) -> str:
         "Справка по командам бота",
         "",
         "Общее",
-        "/start — главное кнопочное меню.",
+        "/start — главное меню: короткое пояснение к кнопкам и ссылка на /help.",
         "/help — эта справка: все команды и что они делают.",
         "/vps — кнопочное меню VPS.",
         "",
