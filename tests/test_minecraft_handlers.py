@@ -5,6 +5,7 @@ from vps_telegram_bot.minecraft_handlers import (
     _mcops_level_seed_unsupported_hint,
     _world_reset_argv_for_telegram,
     admin_menu_markup,
+    admin_world_regen_ultra_markup,
     minecraft_menu_markup,
 )
 
@@ -60,6 +61,26 @@ def test_minecraft_menu_markup_matches_compact_layout() -> None:
         "mc:manual_menu",
         "nav:home",
     ]
+
+
+def test_admin_world_regen_ultra_markup_two_buttons_timer_then_yes() -> None:
+    """Финальное «ТОЧНО…»: одна строка — отсчёт/«да?» и ОТМЕНА!!."""
+
+    waiting = admin_world_regen_ultra_markup(armed=False, timer_label="7")
+    assert len(waiting.inline_keyboard) == 1
+    left, right = waiting.inline_keyboard[0]
+    assert left.text == "7"
+    assert left.callback_data == "adm:world_regen_cd"
+    assert right.text == "ОТМЕНА!!"
+    assert right.callback_data == "adm:world_regen_ultra_cancel"
+
+    armed = admin_world_regen_ultra_markup(armed=True)
+    assert len(armed.inline_keyboard) == 1
+    left2, right2 = armed.inline_keyboard[0]
+    assert left2.text == "да?"
+    assert left2.callback_data == "adm:world_regen_do"
+    assert right2.text == "ОТМЕНА!!"
+    assert right2.callback_data == "adm:world_regen_ultra_cancel"
 
 
 def test_admin_menu_markup_mods_row_third_after_balance() -> None:

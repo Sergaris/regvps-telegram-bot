@@ -183,22 +183,24 @@ def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
     )
 
 
-def admin_world_regen_ultra_markup(*, armed: bool, timer_label: str = "5") -> InlineKeyboardMarkup:
-    """Финальное подтверждение: НЕТ слева; справа по очереди 5…1 (без действия), затем «да?»."""
+def admin_world_regen_ultra_markup(*, armed: bool, timer_label: str = "10") -> InlineKeyboardMarkup:
+    """Финальное подтверждение: слева 10…1 (пустой колбэк), затем «да?»; справа «ОТМЕНА!!»."""
 
     if armed:
-        right_text = "да?"
-        right_cb = "adm:world_regen_do"
+        left_text = "да?"
+        left_cb = "adm:world_regen_do"
     else:
-        right_text = timer_label
-        right_cb = "adm:world_regen_cd"
+        left_text = timer_label
+        left_cb = "adm:world_regen_cd"
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("НЕТ", callback_data="adm:world_regen_ultra_cancel"),
-                InlineKeyboardButton(right_text, callback_data=right_cb),
+                InlineKeyboardButton(left_text, callback_data=left_cb),
+                InlineKeyboardButton(
+                    "ОТМЕНА!!",
+                    callback_data="adm:world_regen_ultra_cancel",
+                ),
             ],
-            [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
 
@@ -347,7 +349,7 @@ async def admin_world_regen_show_ultra_confirm(
     q: CallbackQuery,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Экран 4: текст «ТОЧНО…», на правой кнопке 5→1 (колбэк-пустышка), затем «да?» → сброс."""
+    """Экран 4: текст «ТОЧНО…», на левой кнопке 10→1 (колбэк-пустышка), затем «да?» → сброс."""
 
     key = _world_regen_cd_task_key(q)
     if key is None:
@@ -361,7 +363,7 @@ async def admin_world_regen_show_ultra_confirm(
     if old is not None and not old.done():
         old.cancel()
 
-    ultra_mk = admin_world_regen_ultra_markup(armed=False, timer_label="5")
+    ultra_mk = admin_world_regen_ultra_markup(armed=False, timer_label="10")
     padded = pad_message_for_inline_keyboard(_WORLD_REGEN_ULTRA_RU, ultra_mk)
     await q.edit_message_text(padded, reply_markup=ultra_mk)
 
@@ -369,7 +371,7 @@ async def admin_world_regen_show_ultra_confirm(
 
     async def countdown() -> None:
         try:
-            for label in ("4", "3", "2", "1"):
+            for label in (str(n) for n in range(9, 0, -1)):
                 await asyncio.sleep(1.0)
                 mk = admin_world_regen_ultra_markup(armed=False, timer_label=label)
                 await bot.edit_message_reply_markup(
