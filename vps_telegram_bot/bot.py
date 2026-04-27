@@ -19,6 +19,7 @@ from vps_telegram_bot.minecraft_handlers import (
     admin_world_regen_execute,
     admin_world_regen_show_final_confirm,
     admin_world_regen_show_intro,
+    admin_world_regen_show_mid_confirm,
     minecraft_menu_markup,
     register_minecraft_handlers,
 )
@@ -107,9 +108,11 @@ def _vps_tab_title(*, is_running: bool | None, is_starting: bool = False) -> str
 
     if is_starting:
         return "VPS: операция в панели (in-progress), подождите…"
+    if is_running is True:
+        return "VPS: работает"
     if is_running is False:
-        return "VPS выключен."
-    return "VPS"
+        return "VPS: остановлен"
+    return "VPS: статус неизвестен"
 
 
 def _stack_menu_markup() -> InlineKeyboardMarkup:
@@ -727,6 +730,16 @@ async def _handle_admin_button(
             return
         await admin_world_regen_show_intro(q)
         return
+    if data == "adm:world_regen_mid":
+        if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard(ssh_msg, markup),
+                reply_markup=markup,
+            )
+            return
+        await admin_world_regen_show_mid_confirm(q)
+        return
     if data == "adm:world_regen_confirm":
         if remote is None:
             ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
@@ -1003,7 +1016,7 @@ def _vps_command_handler(
             return
         vps_mk = _vps_menu_markup(is_running=None)
         await m.reply_text(
-            pad_message_for_inline_keyboard("VPS", vps_mk),
+            pad_message_for_inline_keyboard(_vps_tab_title(is_running=None), vps_mk),
             reply_markup=vps_mk,
         )
 
@@ -1015,13 +1028,12 @@ def _start_brief_ru() -> str:
 
     return (
         "Главное меню внизу:\n"
-        "• VPS — виртуалка в Reg.ru: запуск, стоп, перезапуск.\n"
-        "• Minecraft — по SSH: перезапуск сервиса, бэкапы, ручной бэкап.\n"
+        "• VPS — запуск виртуалки в Reg.ru.\n"
+        "• Minecraft — управление бэкапами.\n"
         "• Админская чепуха — статусы VPS и Minecraft, баланс, "
         "проверка и обновление модов Modrinth, выборочное удаление бэкапов, "
         "перегенерация мира.\n"
         "\n"
-        "Полный список команд: /help. Кратко по командам VPS: /vps.\n"
         "Не запускайте бота на той же машине, которой он управляет — иначе после stop "
         "бот тоже отключится."
     )
@@ -1034,7 +1046,7 @@ def _full_help_ru(settings: AppSettings) -> str:
         "Справка по командам бота",
         "",
         "Общее",
-        "/start — главное меню: короткое пояснение к кнопкам и ссылка на /help.",
+        "/start — главное меню: короткое пояснение к кнопкам.",
         "/help — эта справка: все команды и что они делают.",
         "/vps — кнопочное меню VPS.",
         "",
