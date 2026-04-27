@@ -124,6 +124,44 @@ def format_reglet_telegram(
     return out.rstrip()
 
 
+def reglet_start_in_progress_from_list_payload(
+    api_payload: Mapping[str, Any],
+    *,
+    reglet_id: int,
+) -> bool:
+    """По ``links.actions`` панели: для этого reglet идёт операция запуска (ещё не завершена).
+
+    Пока VPS физически может быть ``status != active`` (например ``off``), но запуск уже
+    принят панелью — чтобы UI не предлагал снова «включите VPS» и не дублировал старт.
+
+    Args:
+        api_payload: JSON корня списка reglets (с полем ``links``).
+        reglet_id: Идентификатор reglet из настроек.
+
+    Returns:
+        ``True``, если найдена запись ``StartServerUseCase`` со статусом ``in-progress``
+        для данного ``resource_id`` / ``resource_type``; иначе ``False``.
+    """
+    links = api_payload.get("links")
+    if not isinstance(links, dict):
+        return False
+    acts = links.get("actions")
+    if not isinstance(acts, list):
+        return False
+    for a in acts:
+        if not isinstance(a, dict):
+            continue
+        if a.get("resource_id") != reglet_id:
+            continue
+        if str(a.get("resource_type") or "") != "reglet":
+            continue
+        if str(a.get("status") or "").strip().lower() != "in-progress":
+            continue
+        if str(a.get("type") or "") == "StartServerUseCase":
+            return True
+    return False
+
+
 def reglet_is_running_from_list_payload(
     api_payload: Mapping[str, Any],
     *,

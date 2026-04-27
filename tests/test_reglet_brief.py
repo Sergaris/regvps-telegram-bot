@@ -3,6 +3,7 @@
 from vps_telegram_bot.reglet_brief import (
     format_reglet_telegram,
     reglet_is_running_from_list_payload,
+    reglet_start_in_progress_from_list_payload,
 )
 
 _MINIMAL: dict = {
@@ -90,6 +91,39 @@ def test_reglet_is_running_active_vs_off() -> None:
 def test_reglet_is_running_unknown_when_missing() -> None:
     assert reglet_is_running_from_list_payload({"reglets": []}, reglet_id=7027955) is None
     assert reglet_is_running_from_list_payload({}, reglet_id=1) is None
+
+
+def test_reglet_start_in_progress_detects_start_action() -> None:
+    pl = {
+        "reglets": [
+            {
+                "id": 7027955,
+                "name": "T",
+                "status": "off",
+                "region_slug": "r",
+                "memory": 1024,
+                "disk": 40,
+                "vcpus": 1,
+                "image": {"name": "i", "distribution": "u"},
+            }
+        ],
+        "links": {
+            "actions": [
+                {
+                    "resource_id": 7027955,
+                    "resource_type": "reglet",
+                    "type": "StartServerUseCase",
+                    "status": "in-progress",
+                }
+            ]
+        },
+    }
+    assert reglet_start_in_progress_from_list_payload(pl, reglet_id=7027955) is True
+    assert reglet_is_running_from_list_payload(pl, reglet_id=7027955) is False
+
+
+def test_reglet_start_in_progress_false_for_other_actions() -> None:
+    assert reglet_start_in_progress_from_list_payload(_MINIMAL, reglet_id=7027955) is False
 
 
 def test_detail_merges_disk_usage_gb() -> None:
