@@ -115,23 +115,29 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
 
 
 _WORLD_REGEN_INTRO_RU = (
-    "Удалим папки мира и поднимем новый (tar-бэкапа нет).\n\n"
-    "Случайный сид: «Дальше» → красная «Да».\n"
-    "Свой сид: /mc_world_regen confirm ваш_сид\n"
-    "Только случайный: /mc_world_regen confirm\n\n"
-    "Игроков предупредите заранее."
+    "Мир будет удалён без tar-бэкапа.\n\n"
+    "Кнопка «Дальше» ниже запускает перегенерацию со случайным сидом.\n\n"
+    "Свой сид — выполните в чате:\n"
+    "```\n"
+    "/mc_world_regen confirm ваш_сид\n"
+    "```"
+)
+
+_WORLD_REGEN_MID_RU = (
+    "Текущий мир будет удалён без tar-бэкапа.\n"
+    "Перейти к последнему подтверждению (случайный сид)?"
 )
 
 
 def admin_world_regen_step1_markup() -> InlineKeyboardMarkup:
-    """Первый шаг: пояснение и переход к финальному подтверждению."""
+    """Первый шаг: пояснение и переход к промежуточному подтверждению."""
 
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
                     "Дальше",
-                    callback_data="adm:world_regen_confirm",
+                    callback_data="adm:world_regen_mid",
                 ),
             ],
             [InlineKeyboardButton("Назад", callback_data="nav:admin")],
@@ -140,17 +146,34 @@ def admin_world_regen_step1_markup() -> InlineKeyboardMarkup:
     )
 
 
-def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
-    """Финальное подтверждение сброса мира со случайным seed."""
+def admin_world_regen_mid_markup() -> InlineKeyboardMarkup:
+    """Второй шаг: подтверждение справа («Дальше»)."""
 
     return InlineKeyboardMarkup(
         [
             [
+                InlineKeyboardButton("Назад", callback_data="adm:world_regen_menu"),
+                InlineKeyboardButton(
+                    "Дальше",
+                    callback_data="adm:world_regen_confirm",
+                ),
+            ],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
+    """Последнее подтверждение: «Да» справа."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
                 InlineKeyboardButton(
                     "Да, новый мир (случайный сид)",
                     callback_data="adm:world_regen_do",
                 ),
-                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
             ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
@@ -264,13 +287,23 @@ async def admin_world_regen_show_intro(q: CallbackQuery) -> None:
     )
 
 
+async def admin_world_regen_show_mid_confirm(q: CallbackQuery) -> None:
+    """Экран 2: дополнительное подтверждение перед финалом."""
+
+    mid_mk = admin_world_regen_mid_markup()
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard(_WORLD_REGEN_MID_RU, mid_mk),
+        reply_markup=mid_mk,
+    )
+
+
 async def admin_world_regen_show_final_confirm(q: CallbackQuery) -> None:
-    """Экран 2: последнее подтверждение."""
+    """Экран 3: последнее подтверждение."""
 
     final_mk = admin_world_regen_final_markup()
     await q.edit_message_text(
         pad_message_for_inline_keyboard(
-            "Точно? Удалим мир, сид будет случайным при следующем старте.",
+            "Точно? Удалим мир без tar-бэкапа; при следующем старте сид будет случайным.",
             final_mk,
         ),
         reply_markup=final_mk,
