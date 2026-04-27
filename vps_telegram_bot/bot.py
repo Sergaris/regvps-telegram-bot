@@ -58,9 +58,27 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
     )
 
 
-def _vps_menu_markup() -> InlineKeyboardMarkup:
-    """Меню действий с Reg.ru VPS (как в макете)."""
+def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
+    """Меню действий с Reg.ru VPS: кнопки зависят от статуса (вкл. / выкл. / неизвестно)."""
 
+    back = [InlineKeyboardButton("Назад", callback_data="nav:home")]
+    if is_running is True:
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                    InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
+                ],
+                back,
+            ]
+        )
+    if is_running is False:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Запуск", callback_data="vps:start")],
+                back,
+            ]
+        )
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Запуск", callback_data="vps:start")],
@@ -68,9 +86,17 @@ def _vps_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
                 InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
             ],
-            [InlineKeyboardButton("Назад", callback_data="nav:home")],
+            back,
         ]
     )
+
+
+def _vps_tab_title(*, is_running: bool | None) -> str:
+    """Заголовок экрана VPS после проверки статуса."""
+
+    if is_running is False:
+        return "VPS выключен."
+    return "VPS"
 
 
 def _stack_menu_markup() -> InlineKeyboardMarkup:
@@ -319,7 +345,9 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await q.edit_message_text("Главное меню", reply_markup=_home_menu_markup())
             return
         if data == "nav:vps":
-            await q.edit_message_text("VPS", reply_markup=_vps_menu_markup())
+            regru = _reg_client(context)
+            app_settings: AppSettings = context.application.bot_data["settings"]
+            await _open_vps_tab(q, regru, app_settings)
             return
         if data == "nav:admin":
             await q.edit_message_text("Админская чепуха", reply_markup=admin_menu_markup())
@@ -367,6 +395,35 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await _handle_vps_button(q, context, data)
 
     return handler
+
+
+async def _fetch_reglet_running(regru: RegRuClient, settings: AppSettings) -> bool | None:
+    """Узнать по списку reglets, включена ли виртуалка (``active``)."""
+
+    try:
+        payload = await regru.fetch_reglets()
+    except RegRuClientError:
+        log.exception("fetch reglets failed for VPS menu state")
+        return None
+    return reglet_is_running_from_list_payload(
+        payload,
+        reglet_id=settings.reglet_id,
+    )
+
+
+async def _open_vps_tab(
+    q: CallbackQuery,
+    regru: RegRuClient,
+    settings: AppSettings,
+) -> None:
+    """Показать экран VPS после запроса статуса к панели."""
+
+    await q.edit_message_text("Проверяю статус VPS...")
+    running = await _fetch_reglet_running(regru, settings)
+    await q.edit_message_text(
+        _vps_tab_title(is_running=running),
+        reply_markup=_vps_menu_markup(is_running=running),
+    )
 
 
 async def _fetch_vps_status_text(regru: RegRuClient, settings: AppSettings) -> str:
@@ -508,22 +565,41 @@ async def _handle_vps_button(
 
     regru = _reg_client(context)
     settings: AppSettings = context.application.bot_data["settings"]
+    if data == "vps:open":
+        await _open_vps_tab(q, regru, settings)
+        return
     if data == "vps:info":
-        await q.edit_message_text("VPS: запрашиваю статус...", reply_markup=_vps_menu_markup())
+        running = await _fetch_reglet_running(regru, settings)
+        await q.edit_message_text(
+            "VPS: запрашиваю статус...",
+            reply_markup=_vps_menu_markup(is_running=running),
+        )
         text = await _fetch_vps_status_text(regru, settings)
-        await q.edit_message_text(text, reply_markup=_vps_menu_markup())
+        running_after = await _fetch_reglet_running(regru, settings)
+        await q.edit_message_text(
+            text,
+            reply_markup=_vps_menu_markup(is_running=running_after),
+        )
         return
     if data == "vps:balance":
-        await q.edit_message_text("VPS: запрашиваю баланс...", reply_markup=_vps_menu_markup())
+        running = await _fetch_reglet_running(regru, settings)
+        await q.edit_message_text(
+            "VPS: запрашиваю баланс...",
+            reply_markup=_vps_menu_markup(is_running=running),
+        )
         try:
             text = format_balance_telegram(await regru.fetch_balance_data())
         except RegRuClientError:
             log.exception("fetch balance_data failed from button")
             text = "Панель недоступна или отклонила запрос. Повторите позже."
-        await q.edit_message_text(text, reply_markup=_vps_menu_markup())
+        running_after = await _fetch_reglet_running(regru, settings)
+        await q.edit_message_text(
+            text,
+            reply_markup=_vps_menu_markup(is_running=running_after),
+        )
         return
     if data == "vps:start":
-        await _post_vps_button_action(q, regru, RegletAction.START)
+        await _post_vps_button_action(q, regru, RegletAction.START, settings)
         return
     if data == "vps:start_from_mc":
         await q.edit_message_text(
@@ -548,7 +624,7 @@ async def _handle_vps_button(
                 [
                     [
                         InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
-                        InlineKeyboardButton("Назад", callback_data="nav:vps"),
+                        InlineKeyboardButton("Назад", callback_data="vps:open"),
                     ],
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
@@ -562,7 +638,7 @@ async def _handle_vps_button(
                 [
                     [
                         InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
-                        InlineKeyboardButton("Назад", callback_data="nav:vps"),
+                        InlineKeyboardButton("Назад", callback_data="vps:open"),
                     ],
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
@@ -570,26 +646,35 @@ async def _handle_vps_button(
         )
         return
     if data == "vps:do_stop":
-        await _post_vps_button_action(q, regru, RegletAction.STOP)
+        await _post_vps_button_action(q, regru, RegletAction.STOP, settings)
         return
     if data == "vps:do_reboot":
-        await _post_vps_button_action(q, regru, RegletAction.REBOOT)
+        await _post_vps_button_action(q, regru, RegletAction.REBOOT, settings)
 
 
 async def _post_vps_button_action(
     q: CallbackQuery,
     regru: RegRuClient,
     action: RegletAction,
+    settings: AppSettings,
 ) -> None:
     """Post a Reg.ru action and keep the VPS menu attached."""
 
-    await q.edit_message_text(f"VPS: отправляю {action.value}...", reply_markup=_vps_menu_markup())
+    running_before = await _fetch_reglet_running(regru, settings)
+    await q.edit_message_text(
+        f"VPS: отправляю {action.value}...",
+        reply_markup=_vps_menu_markup(is_running=running_before),
+    )
     try:
         text = await regru.post_reglet_action(action)
     except RegRuClientError:
         log.exception("reglet action failed from button: %s", action)
         text = "Панель недоступна или отклонила запрос. Повторите позже."
-    await q.edit_message_text(text, reply_markup=_vps_menu_markup())
+    running_after = await _fetch_reglet_running(regru, settings)
+    await q.edit_message_text(
+        text,
+        reply_markup=_vps_menu_markup(is_running=running_after),
+    )
 
 
 def _help_text_handler(
@@ -660,7 +745,10 @@ def _vps_command_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text("VPS", reply_markup=_vps_menu_markup())
+        await m.reply_text(
+            "VPS",
+            reply_markup=_vps_menu_markup(is_running=None),
+        )
 
     return handler
 
