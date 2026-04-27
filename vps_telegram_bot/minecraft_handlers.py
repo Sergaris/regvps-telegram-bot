@@ -17,7 +17,7 @@ from vps_telegram_bot.config import AppSettings, McopsRemoteSettings
 from vps_telegram_bot.reglet_brief import format_reglet_telegram
 from vps_telegram_bot.regru_client import RegletAction, RegRuClient, RegRuClientError
 from vps_telegram_bot.remote_mcops import run_remote_mcops
-from vps_telegram_bot.telegram_inline_kb import equal_width_inline_row
+from vps_telegram_bot.telegram_inline_kb import pad_message_for_inline_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +37,32 @@ _MANUAL_BACKUP_RE = re.compile(r"^tar:worlds-manual-(manual-[123])-.+\.(?:tar\.g
 
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+
+
+async def _edit_message_with_inline_kb(
+    q: CallbackQuery,
+    text: str,
+    markup: InlineKeyboardMarkup,
+) -> None:
+    """Отправить текст с невидимым padding под ширину полосы inline-клавиатуры."""
+
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard(text, markup),
+        reply_markup=markup,
+    )
+
+
+async def _reply_message_with_inline_kb(
+    msg: Message,
+    text: str,
+    markup: InlineKeyboardMarkup,
+) -> Message:
+    """Ответить сообщением с padding под ширину inline-клавиатуры."""
+
+    return await msg.reply_text(
+        pad_message_for_inline_keyboard(text, markup),
+        reply_markup=markup,
+    )
 
 
 def _tail_text(text: str, *, max_len: int) -> str:
@@ -72,19 +98,15 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Статус VPS", callback_data="adm:vps_status"),
-                    InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Статус VPS", callback_data="adm:vps_status"),
+                InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
+            ],
             [InlineKeyboardButton("Баланс VPS", callback_data="adm:vps_balance")],
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
-                    InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
+                InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
+            ],
             [InlineKeyboardButton("Удалить бэкап", callback_data="adm:backup_delete_menu")],
             [InlineKeyboardButton("Перегенерить мир", callback_data="adm:world_regen_menu")],
             [InlineKeyboardButton("Назад", callback_data="nav:home")],
@@ -123,15 +145,13 @@ def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton(
-                        "Да, новый мир (случайный сид)",
-                        callback_data="adm:world_regen_do",
-                    ),
-                    InlineKeyboardButton("Отмена", callback_data="nav:admin"),
-                ]
-            ),
+            [
+                InlineKeyboardButton(
+                    "Да, новый мир (случайный сид)",
+                    callback_data="adm:world_regen_do",
+                ),
+                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
+            ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -142,12 +162,10 @@ def admin_mods_apply_confirm_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Да, обновить моды", callback_data="adm:do_mods_apply"),
-                    InlineKeyboardButton("Назад", callback_data="nav:admin"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Да, обновить моды", callback_data="adm:do_mods_apply"),
+                InlineKeyboardButton("Назад", callback_data="nav:admin"),
+            ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -167,18 +185,26 @@ async def admin_panel_run_mods_plan(
         if code == 0
         else f"mods plan: код {code}\n{_tail_text(blob, max_len=3200)}"
     )
-    await q.edit_message_text(text, reply_markup=admin_menu_markup())
+    adm_mk = admin_menu_markup()
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard(text, adm_mk),
+        reply_markup=adm_mk,
+    )
 
 
 async def admin_panel_show_mods_apply_confirm(q: CallbackQuery) -> None:
     """Экран подтверждения перед ``mods apply --local``."""
 
+    mods_mk = admin_mods_apply_confirm_markup()
     await q.edit_message_text(
-        "Применить обновления Modrinth на сервере?\n"
-        "Будут скачаны и заменены соответствующие JAR в каталоге mods "
-        "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
-        "сделайте это отдельно.",
-        reply_markup=admin_mods_apply_confirm_markup(),
+        pad_message_for_inline_keyboard(
+            "Применить обновления Modrinth на сервере?\n"
+            "Будут скачаны и заменены соответствующие JAR в каталоге mods "
+            "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
+            "сделайте это отдельно.",
+            mods_mk,
+        ),
+        reply_markup=mods_mk,
     )
 
 
@@ -198,7 +224,11 @@ async def admin_panel_run_mods_apply(
         if code == 0
         else f"mods apply: код {code}\n{_tail_text(blob, max_len=3200)}"
     )
-    await q.edit_message_text(text, reply_markup=admin_menu_markup())
+    adm_mk = admin_menu_markup()
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard(text, adm_mk),
+        reply_markup=adm_mk,
+    )
 
 
 def _mcops_level_seed_unsupported_hint(blob: str) -> str:
@@ -227,18 +257,23 @@ def _world_reset_argv_for_telegram(*, seed: str | None) -> list[str]:
 async def admin_world_regen_show_intro(q: CallbackQuery) -> None:
     """Экран 1: что будет с seed и миром."""
 
+    step1_mk = admin_world_regen_step1_markup()
     await q.edit_message_text(
-        _WORLD_REGEN_INTRO_RU,
-        reply_markup=admin_world_regen_step1_markup(),
+        pad_message_for_inline_keyboard(_WORLD_REGEN_INTRO_RU, step1_mk),
+        reply_markup=step1_mk,
     )
 
 
 async def admin_world_regen_show_final_confirm(q: CallbackQuery) -> None:
     """Экран 2: последнее подтверждение."""
 
+    final_mk = admin_world_regen_final_markup()
     await q.edit_message_text(
-        "Точно? Удалим мир, сид будет случайным при следующем старте.",
-        reply_markup=admin_world_regen_final_markup(),
+        pad_message_for_inline_keyboard(
+            "Точно? Удалим мир, сид будет случайным при следующем старте.",
+            final_mk,
+        ),
+        reply_markup=final_mk,
     )
 
 
@@ -295,12 +330,10 @@ def _manual_backup_markup(
     slots = _manual_slot_labels(rows or [])
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton(slots["manual-1"], callback_data="mcm:manual-1"),
-                    InlineKeyboardButton(slots["manual-2"], callback_data="mcm:manual-2"),
-                ]
-            ),
+            [
+                InlineKeyboardButton(slots["manual-1"], callback_data="mcm:manual-1"),
+                InlineKeyboardButton(slots["manual-2"], callback_data="mcm:manual-2"),
+            ],
             [InlineKeyboardButton(slots["manual-3"], callback_data="mcm:manual-3")],
             [InlineKeyboardButton("Назад", callback_data="nav:mc")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
@@ -311,12 +344,10 @@ def _manual_backup_markup(
 def _manual_overwrite_confirm_markup(slot: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Да, перезаписать", callback_data=f"mcmy:{slot}"),
-                    InlineKeyboardButton("Назад", callback_data="mc:manual_menu"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Да, перезаписать", callback_data=f"mcmy:{slot}"),
+                InlineKeyboardButton("Назад", callback_data="mc:manual_menu"),
+            ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -342,7 +373,8 @@ async def _safe_edit_callback_message(
     """Edit a callback message without losing the underlying long-running operation."""
 
     try:
-        await q.edit_message_text(text, reply_markup=reply_markup)
+        body = pad_message_for_inline_keyboard(text, reply_markup)
+        await q.edit_message_text(body, reply_markup=reply_markup)
     except TelegramError:
         log.warning("Could not edit Telegram callback message", exc_info=True)
         return False
@@ -468,9 +500,11 @@ def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
         uid = u.id
 
         if remote is None:
-            await q.edit_message_text(
+            nav_del = _admin_backup_delete_nav_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
-                reply_markup=_admin_backup_delete_nav_markup(),
+                nav_del,
             )
             return
 
@@ -484,12 +518,10 @@ def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
             eid, label = catalog[idx]
             kb = InlineKeyboardMarkup(
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton("Да, удалить", callback_data=f"aby:{token}:{idx}"),
-                            InlineKeyboardButton("Отмена", callback_data=f"abx:{token}:{idx}"),
-                        ]
-                    ),
+                    [
+                        InlineKeyboardButton("Да, удалить", callback_data=f"aby:{token}:{idx}"),
+                        InlineKeyboardButton("Отмена", callback_data=f"abx:{token}:{idx}"),
+                    ],
                     [InlineKeyboardButton("К списку", callback_data="adm:backup_delete_menu")],
                     [InlineKeyboardButton("К админке", callback_data="nav:admin")],
                 ]
@@ -500,11 +532,12 @@ def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
                 "Восстановить его уже будет нельзя.\n\n"
                 f"{eid}" + (f"\n{extra}" if extra else "")
             )
-            await q.edit_message_text(text=body, reply_markup=kb)
+            await _edit_message_with_inline_kb(q, body, kb)
             return
 
         if (m := _CALLBACK_AB_NO.match(q.data)) is not None:
-            await q.edit_message_text("Удаление отменено.", reply_markup=admin_menu_markup())
+            adm_mk = admin_menu_markup()
+            await _edit_message_with_inline_kb(q, "Удаление отменено.", adm_mk)
             return
 
         if (m := _CALLBACK_AB_YES.match(q.data)) is not None:
@@ -526,7 +559,8 @@ def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
                 if code == 0
                 else f"Ошибка удаления. Код {code}\n{tail}"
             )
-            await q.edit_message_text(text, reply_markup=_admin_backup_delete_nav_markup())
+            nav_del = _admin_backup_delete_nav_markup()
+            await _edit_message_with_inline_kb(q, text, nav_del)
             return
 
     return handler
@@ -556,10 +590,12 @@ async def _reply_world_regen_progress(
     result_text = (
         f"Готово. Код {code}\n{tail}{hint}" if code == 0 else f"Ошибка. Код {code}\n{tail}{hint}"
     )
+    mc_mk = minecraft_menu_markup()
+    padded = pad_message_for_inline_keyboard(result_text, mc_mk)
     try:
-        await status_msg.edit_text(result_text, reply_markup=minecraft_menu_markup())
+        await status_msg.edit_text(padded, reply_markup=mc_mk)
     except TelegramError:
-        await msg.reply_text(result_text, reply_markup=minecraft_menu_markup())
+        await _reply_message_with_inline_kb(msg, result_text, mc_mk)
 
 
 def _mc_world_regen_handler(settings: AppSettings) -> Handler:
@@ -664,7 +700,8 @@ def _mc_status_handler(settings: AppSettings) -> Handler:
         if code != 0:
             await msg.reply_text(f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}")
             return
-        await msg.reply_text(out.strip()[:3900], reply_markup=minecraft_menu_markup())
+        mc_mk = minecraft_menu_markup()
+        await _reply_message_with_inline_kb(msg, out.strip()[:3900], mc_mk)
 
     return handler
 
@@ -687,7 +724,8 @@ def _mc_service_handler(settings: AppSettings, action: str) -> Handler:
         await msg.reply_text(f"Minecraft: отправляю systemctl {action}…")
         code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
         tail = _tail_text(out + "\n" + err, max_len=3500)
-        await msg.reply_text(f"Код {code}\n{tail}", reply_markup=minecraft_menu_markup())
+        mc_mk = minecraft_menu_markup()
+        await _reply_message_with_inline_kb(msg, f"Код {code}\n{tail}", mc_mk)
 
     return handler
 
@@ -708,9 +746,11 @@ def _mc_players_handler(settings: AppSettings) -> Handler:
         if code != 0:
             await msg.reply_text(f"players count failed ({code}):\n{(err or out)[:1500]}")
             return
-        await msg.reply_text(
+        mc_mk = minecraft_menu_markup()
+        await _reply_message_with_inline_kb(
+            msg,
             f"Игроков онлайн (по RCON list): {out.strip()}",
-            reply_markup=minecraft_menu_markup(),
+            mc_mk,
         )
 
     return handler
@@ -749,9 +789,11 @@ def _mc_backups_handler(settings: AppSettings) -> Handler:
         buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
         uid = u.id if u else 0
         context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
-        await msg.reply_text(
+        bk_mk = InlineKeyboardMarkup(buttons)
+        await _reply_message_with_inline_kb(
+            msg,
             "Последние бэкапы. Нажмите для подтверждения отката:",
-            reply_markup=InlineKeyboardMarkup(buttons),
+            bk_mk,
         )
 
     return handler
@@ -771,17 +813,17 @@ def _mc_backup_manual_handler(settings: AppSettings) -> Handler:
             return
         args = context.args or []
         if len(args) != 1 or args[0] not in {"manual-1", "manual-2", "manual-3"}:
-            await msg.reply_text(
-                "Выберите слот ручного бэкапа:",
-                reply_markup=await _manual_backup_markup_from_remote(remote),
-            )
+            manual_mk = await _manual_backup_markup_from_remote(remote)
+            await _reply_message_with_inline_kb(msg, "Выберите слот ручного бэкапа:", manual_mk)
             return
         slot = args[0]
         rows = await _manual_slot_rows_from_remote(remote)
         if _is_manual_slot_occupied(rows, slot):
-            await msg.reply_text(
+            ow_mk = _manual_overwrite_confirm_markup(slot)
+            await _reply_message_with_inline_kb(
+                msg,
                 f"Слот {slot} уже занят. Перезаписать его новым ручным бэкапом?",
-                reply_markup=_manual_overwrite_confirm_markup(slot),
+                ow_mk,
             )
             return
         await msg.reply_text(f"Запускаю ручной бэкап слота {slot}…")
@@ -790,10 +832,8 @@ def _mc_backup_manual_handler(settings: AppSettings) -> Handler:
             ["backup", "create", "--slot", slot, "--local"],
         )
         tail = _tail_text(out + "\n" + err, max_len=3500)
-        await msg.reply_text(
-            f"Код {code}\n{tail}",
-            reply_markup=await _manual_backup_markup_from_remote(remote),
-        )
+        manual_mk = await _manual_backup_markup_from_remote(remote)
+        await _reply_message_with_inline_kb(msg, f"Код {code}\n{tail}", manual_mk)
 
     return handler
 
@@ -808,16 +848,16 @@ async def _show_backup_catalog(
     await q.edit_message_text("Загружаю список бэкапов...")
     code, rows = await _remote_json_lines(remote, ["backup", "list", "--local", "--json"])
     if code != 0:
-        await q.edit_message_text(
-            "backup list: ошибка удалённого mcops.",
-            reply_markup=_backup_nav_markup(),
-        )
+        nav_bk = _backup_nav_markup()
+        await _edit_message_with_inline_kb(q, "backup list: ошибка удалённого mcops.", nav_bk)
         await _safe_answer_callback(q)
         return
     if not rows:
-        await q.edit_message_text(
+        nav_bk = _backup_nav_markup()
+        await _edit_message_with_inline_kb(
+            q,
             "Бэкапы не найдены (пустой каталог или не настроен мод-путь).",
-            reply_markup=_backup_nav_markup(),
+            nav_bk,
         )
         await _safe_answer_callback(q)
         return
@@ -836,9 +876,11 @@ async def _show_backup_catalog(
     buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
     uid = q.from_user.id
     context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
-    await q.edit_message_text(
+    bk_mk = InlineKeyboardMarkup(buttons)
+    await _edit_message_with_inline_kb(
+        q,
         "Последние бэкапы. Нажмите для подтверждения отката:",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        bk_mk,
     )
     await _safe_answer_callback(q)
 
@@ -853,16 +895,12 @@ async def admin_backup_delete_show_catalog(
     await q.edit_message_text("Загружаю список бэкапов для удаления...")
     code, rows = await _remote_json_lines(remote, ["backup", "list", "--local", "--json"])
     if code != 0:
-        await q.edit_message_text(
-            "backup list: ошибка удалённого mcops.",
-            reply_markup=_admin_backup_delete_nav_markup(),
-        )
+        nav_del = _admin_backup_delete_nav_markup()
+        await _edit_message_with_inline_kb(q, "backup list: ошибка удалённого mcops.", nav_del)
         return
     if not rows:
-        await q.edit_message_text(
-            "Бэкапы не найдены.",
-            reply_markup=_admin_backup_delete_nav_markup(),
-        )
+        nav_del = _admin_backup_delete_nav_markup()
+        await _edit_message_with_inline_kb(q, "Бэкапы не найдены.", nav_del)
         return
 
     catalog: list[tuple[str, str]] = []
@@ -879,9 +917,11 @@ async def admin_backup_delete_show_catalog(
     buttons.append([InlineKeyboardButton("Домой", callback_data="nav:home")])
     uid = q.from_user.id
     context.application.bot_data.setdefault(_BACKUP_CATALOG_KEY, {})[f"{uid}:{token}"] = catalog
-    await q.edit_message_text(
+    del_mk = InlineKeyboardMarkup(buttons)
+    await _edit_message_with_inline_kb(
+        q,
         "Выберите бэкап для удаления с диска сервера (безвозвратно):",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        del_mk,
     )
 
 
@@ -889,9 +929,11 @@ async def _show_manual_backup_slots(q: CallbackQuery, remote: McopsRemoteSetting
     """Render manual backup slots with occupied/free state."""
 
     await q.edit_message_text("Проверяю ручные слоты бэкапов...")
-    await q.edit_message_text(
+    manual_mk = await _manual_backup_markup_from_remote(remote)
+    await _edit_message_with_inline_kb(
+        q,
         "Ручные слоты. Нажмите слот, чтобы перезаписать его новым tar-бэкапом:",
-        reply_markup=await _manual_backup_markup_from_remote(remote),
+        manual_mk,
     )
     await _safe_answer_callback(q)
 
@@ -934,9 +976,11 @@ async def _run_restore_with_progress(
         reply_markup=_backup_nav_markup(),
     )
     if not edited and q.message is not None:
-        await q.message.reply_text(
+        nav_bk = _backup_nav_markup()
+        await _reply_message_with_inline_kb(
+            q.message,
             f"Restore завершён. Код {code}\n{tail}",
-            reply_markup=_backup_nav_markup(),
+            nav_bk,
         )
 
 
@@ -973,9 +1017,10 @@ async def _run_manual_backup_with_progress(
         reply_markup=markup,
     )
     if not edited and q.message is not None:
-        await q.message.reply_text(
+        await _reply_message_with_inline_kb(
+            q.message,
             f"Ручной бэкап завершён. Код {code}\n{tail}",
-            reply_markup=markup,
+            markup,
         )
 
 
@@ -995,7 +1040,8 @@ async def _handle_minecraft_button(
             if code == 0
             else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
         )
-        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
+        mc_mk = minecraft_menu_markup()
+        await _edit_message_with_inline_kb(q, text, mc_mk)
         await _safe_answer_callback(q)
         return
     if action == "players":
@@ -1006,44 +1052,37 @@ async def _handle_minecraft_button(
             if code == 0
             else f"players count failed ({code}):\n{(err or out)[:1500]}"
         )
-        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
+        mc_mk = minecraft_menu_markup()
+        await _edit_message_with_inline_kb(q, text, mc_mk)
         await _safe_answer_callback(q)
         return
     if action == "start":
         await _run_minecraft_service_button(q, remote, "start")
         return
     if action == "confirm_stop":
-        await q.edit_message_text(
-            "Остановить Minecraft?",
-            reply_markup=InlineKeyboardMarkup(
+        stop_mk = InlineKeyboardMarkup(
+            [
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton("Да, остановить", callback_data="mc:do_stop"),
-                            InlineKeyboardButton("Назад", callback_data="nav:mc"),
-                        ]
-                    ),
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
+                    InlineKeyboardButton("Да, остановить", callback_data="mc:do_stop"),
+                    InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                ],
+                [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            ]
         )
+        await _edit_message_with_inline_kb(q, "Остановить Minecraft?", stop_mk)
         await _safe_answer_callback(q)
         return
     if action == "confirm_restart":
-        await q.edit_message_text(
-            "Перезапустить Minecraft?",
-            reply_markup=InlineKeyboardMarkup(
+        restart_mk = InlineKeyboardMarkup(
+            [
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton("Да, restart", callback_data="mc:do_restart"),
-                            InlineKeyboardButton("Назад", callback_data="nav:mc"),
-                        ]
-                    ),
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
+                    InlineKeyboardButton("Да, restart", callback_data="mc:do_restart"),
+                    InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                ],
+                [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            ]
         )
+        await _edit_message_with_inline_kb(q, "Перезапустить Minecraft?", restart_mk)
         await _safe_answer_callback(q)
         return
     if action == "do_stop":
@@ -1067,7 +1106,8 @@ async def _run_minecraft_service_button(
     await q.edit_message_text(f"Minecraft: отправляю systemctl {action}...")
     code, out, err = await run_remote_mcops(remote, ["service", action, "--local"])
     tail = _tail_text(out + "\n" + err, max_len=3000)
-    await q.edit_message_text(f"Код {code}\n{tail}", reply_markup=minecraft_menu_markup())
+    mc_mk = minecraft_menu_markup()
+    await _edit_message_with_inline_kb(q, f"Код {code}\n{tail}", mc_mk)
     await _safe_answer_callback(q)
 
 
@@ -1078,9 +1118,11 @@ async def _handle_manual_backup_button(
 ) -> None:
     rows = await _manual_slot_rows_from_remote(remote)
     if _is_manual_slot_occupied(rows, slot):
-        await q.edit_message_text(
+        ow_mk = _manual_overwrite_confirm_markup(slot)
+        await _edit_message_with_inline_kb(
+            q,
             f"Слот {slot} уже занят. Перезаписать его новым ручным бэкапом?",
-            reply_markup=_manual_overwrite_confirm_markup(slot),
+            ow_mk,
         )
         await _safe_answer_callback(q)
         return
@@ -1110,10 +1152,8 @@ async def _handle_stack_button(
 
     regru = context.application.bot_data.get("regru")
     if not isinstance(regru, RegRuClient):
-        await q.edit_message_text(
-            "Внутренняя ошибка: нет RegRuClient.",
-            reply_markup=_stack_menu_markup(),
-        )
+        stk_mk = _stack_menu_markup()
+        await _edit_message_with_inline_kb(q, "Внутренняя ошибка: нет RegRuClient.", stk_mk)
         await _safe_answer_callback(q)
         return
     if action == "status":
@@ -1145,13 +1185,16 @@ async def _handle_stack_button(
             lines.append(f"Minecraft mcops status: код {code}")
             lines.append(_tail_text(out or err, max_len=2200))
             await _append_watchdog_status(lines, remote)
-        await q.edit_message_text("\n\n".join(lines)[:3900], reply_markup=_stack_menu_markup())
+        stk_mk = _stack_menu_markup()
+        await _edit_message_with_inline_kb(q, "\n\n".join(lines)[:3900], stk_mk)
         await _safe_answer_callback(q)
         return
     if remote is None:
-        await q.edit_message_text(
+        stk_mk = _stack_menu_markup()
+        await _edit_message_with_inline_kb(
+            q,
             "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
-            reply_markup=_stack_menu_markup(),
+            stk_mk,
         )
         return
     if action == "start":
@@ -1159,52 +1202,53 @@ async def _handle_stack_button(
         try:
             await regru.post_reglet_action(RegletAction.START)
         except RegRuClientError:
-            await q.edit_message_text(
-                "Панель недоступна при запуске VPS.",
-                reply_markup=_stack_menu_markup(),
-            )
+            stk_mk = _stack_menu_markup()
+            await _edit_message_with_inline_kb(q, "Панель недоступна при запуске VPS.", stk_mk)
             await _safe_answer_callback(q)
             return
+        stk_mk = _stack_menu_markup()
         for attempt in range(60):
             code, _out, _err = await run_remote_mcops(remote, ["status", "--json"])
             if code == 0:
                 break
             if attempt % 6 == 0:
-                await q.edit_message_text(f"Жду SSH до хоста Minecraft... {attempt * 5} сек")
+                await _edit_message_with_inline_kb(
+                    q,
+                    f"Жду SSH до хоста Minecraft... {attempt * 5} сек",
+                    stk_mk,
+                )
             await asyncio.sleep(5.0)
         else:
-            await q.edit_message_text(
+            await _edit_message_with_inline_kb(
+                q,
                 "SSH так и не ответил. Проверьте сеть/VPS вручную.",
-                reply_markup=_stack_menu_markup(),
+                stk_mk,
             )
             await _safe_answer_callback(q)
             return
         code, out, err = await run_remote_mcops(remote, ["service", "start", "--local"])
         tail = _tail_text(out + "\n" + err, max_len=2500)
-        await q.edit_message_text(
+        await _edit_message_with_inline_kb(
+            q,
             f"stack_start: service start код {code}\n{tail}",
-            reply_markup=_stack_menu_markup(),
+            stk_mk,
         )
         await _safe_answer_callback(q)
         return
     if action == "confirm_stop":
-        await q.edit_message_text(
-            "Остановить Minecraft, затем VPS?",
-            reply_markup=InlineKeyboardMarkup(
+        confirm_mk = InlineKeyboardMarkup(
+            [
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton(
-                                "Да, остановить стек",
-                                callback_data="stk:do_stop",
-                            ),
-                            InlineKeyboardButton("Назад", callback_data="nav:stack"),
-                        ]
+                    InlineKeyboardButton(
+                        "Да, остановить стек",
+                        callback_data="stk:do_stop",
                     ),
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
+                    InlineKeyboardButton("Назад", callback_data="nav:stack"),
+                ],
+                [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            ]
         )
+        await _edit_message_with_inline_kb(q, "Остановить Minecraft, затем VPS?", confirm_mk)
         await _safe_answer_callback(q)
         return
     if action == "do_stop":
@@ -1212,35 +1256,43 @@ async def _handle_stack_button(
         code, out, err = await run_remote_mcops(remote, ["service", "stop", "--local"])
         if code != 0:
             tail = _tail_text(out + "\n" + err, max_len=2500)
-            await q.edit_message_text(
+            stk_mk = _stack_menu_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 f"VPS не останавливаю: Minecraft stop завершился с ошибкой.\nКод {code}\n{tail}",
-                reply_markup=_stack_menu_markup(),
+                stk_mk,
             )
             await _safe_answer_callback(q)
             return
         status_code, status_out, status_err = await run_remote_mcops(remote, ["status", "--json"])
         if status_code != 0:
-            await q.edit_message_text(
+            stk_mk = _stack_menu_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 "VPS не останавливаю: не удалось проверить статус Minecraft после stop.\n"
                 f"{_tail_text(status_err or status_out, max_len=1500)}",
-                reply_markup=_stack_menu_markup(),
+                stk_mk,
             )
             await _safe_answer_callback(q)
             return
         try:
             status_root = json.loads(status_out)
         except json.JSONDecodeError:
-            await q.edit_message_text(
+            stk_mk = _stack_menu_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 "VPS не останавливаю: mcops status вернул не-JSON.",
-                reply_markup=_stack_menu_markup(),
+                stk_mk,
             )
             await _safe_answer_callback(q)
             return
         if status_root.get("phase") != "stopped":
-            await q.edit_message_text(
+            stk_mk = _stack_menu_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 "VPS не останавливаю: Minecraft не выглядит остановленным "
                 f"(phase={status_root.get('phase')}).",
-                reply_markup=_stack_menu_markup(),
+                stk_mk,
             )
             await _safe_answer_callback(q)
             return
@@ -1249,7 +1301,8 @@ async def _handle_stack_button(
             text = await regru.post_reglet_action(RegletAction.STOP)
         except RegRuClientError:
             text = "Панель недоступна при остановке VPS."
-        await q.edit_message_text(text, reply_markup=_stack_menu_markup())
+        stk_mk = _stack_menu_markup()
+        await _edit_message_with_inline_kb(q, text, stk_mk)
         await _safe_answer_callback(q)
 
 
@@ -1274,9 +1327,11 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             return
 
         if remote is None:
-            await q.edit_message_text(
+            mc_mk = minecraft_menu_markup()
+            await _edit_message_with_inline_kb(
+                q,
                 "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
-                reply_markup=minecraft_menu_markup(),
+                mc_mk,
             )
             return
         uid = u.id
@@ -1303,33 +1358,29 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             eid, label = catalog[idx]
             kb = InlineKeyboardMarkup(
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton(
-                                "Да, откатить",
-                                callback_data=f"mcy:{token}:{idx}",
-                            ),
-                            InlineKeyboardButton(
-                                "Отмена",
-                                callback_data=f"mcn:{token}:{idx}",
-                            ),
-                        ]
-                    ),
+                    [
+                        InlineKeyboardButton(
+                            "Да, откатить",
+                            callback_data=f"mcy:{token}:{idx}",
+                        ),
+                        InlineKeyboardButton(
+                            "Отмена",
+                            callback_data=f"mcn:{token}:{idx}",
+                        ),
+                    ],
                     [InlineKeyboardButton("Назад", callback_data="mc:backups")],
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             )
             extra = label.strip() if label.strip() != eid.strip() else ""
             confirm_body = f"Подтвердите откат на:\n{eid}" + (f"\n{extra}" if extra else "")
-            await q.edit_message_text(
-                text=confirm_body,
-                reply_markup=kb,
-            )
+            await _edit_message_with_inline_kb(q, confirm_body, kb)
             await _safe_answer_callback(q)
             return
 
         if (m := _CALLBACK_NO.match(q.data)) is not None:
-            await q.edit_message_text(text="Откат отменён.", reply_markup=_backup_nav_markup())
+            nav_bk = _backup_nav_markup()
+            await _edit_message_with_inline_kb(q, "Откат отменён.", nav_bk)
             await _safe_answer_callback(q)
             return
 
@@ -1405,7 +1456,8 @@ def _stack_status_handler(settings: AppSettings) -> Handler:
             lines.append(f"Minecraft mcops status: код {code}")
             lines.append((out or err).strip()[:2500])
             await _append_watchdog_status(lines, remote)
-        await msg.reply_text("\n\n".join(lines), reply_markup=_stack_menu_markup())
+        stk_mk = _stack_menu_markup()
+        await _reply_message_with_inline_kb(msg, "\n\n".join(lines), stk_mk)
 
     return handler
 
@@ -1444,9 +1496,9 @@ def _stack_start_handler(settings: AppSettings) -> Handler:
         await msg.reply_text("SSH доступен. Запускаю Minecraft сервис…")
         code, out, err = await run_remote_mcops(remote, ["service", "start", "--local"])
         tail = _tail_text(out + "\n" + err, max_len=2500)
-        await msg.reply_text(
-            f"stack_start: service start код {code}\n{tail}",
-            reply_markup=_stack_menu_markup(),
+        stk_mk = _stack_menu_markup()
+        await _reply_message_with_inline_kb(
+            msg, f"stack_start: service start код {code}\n{tail}", stk_mk
         )
 
     return handler
@@ -1502,9 +1554,7 @@ def _stack_stop_handler(settings: AppSettings) -> Handler:
         except RegRuClientError:
             await msg.reply_text("Панель недоступна при остановке VPS.")
             return
-        await msg.reply_text(
-            "Запрос на остановку VPS отправлен.",
-            reply_markup=_stack_menu_markup(),
-        )
+        stk_mk = _stack_menu_markup()
+        await _reply_message_with_inline_kb(msg, "Запрос на остановку VPS отправлен.", stk_mk)
 
     return handler
