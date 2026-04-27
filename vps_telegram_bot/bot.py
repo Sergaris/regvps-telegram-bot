@@ -20,7 +20,10 @@ from vps_telegram_bot.minecraft_handlers import (
     minecraft_menu_markup,
     register_minecraft_handlers,
 )
-from vps_telegram_bot.reglet_brief import format_reglet_telegram
+from vps_telegram_bot.reglet_brief import (
+    format_reglet_telegram,
+    reglet_is_running_from_list_payload,
+)
 from vps_telegram_bot.regru_client import (
     RegletAction,
     RegRuClient,
@@ -81,6 +84,25 @@ def _stack_menu_markup() -> InlineKeyboardMarkup:
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
+
+
+def _minecraft_vps_off_markup() -> InlineKeyboardMarkup:
+    """Экран «сначала включите VPS» из раздела Minecraft."""
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Включить", callback_data="vps:start_from_mc"),
+                InlineKeyboardButton("Назад", callback_data="nav:home"),
+            ],
+        ]
+    )
+
+
+async def _open_minecraft_tab(q: CallbackQuery) -> None:
+    """Показать меню вкладки Minecraft (после проверки VPS или по «Открыть после запуска»)."""
+
+    await q.edit_message_text("Minecraft", reply_markup=minecraft_menu_markup())
 
 
 async def _safe_answer_callback(q: CallbackQuery) -> None:
@@ -313,7 +335,25 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
                 )
             return
         if data == "nav:mc":
-            await q.edit_message_text("Minecraft", reply_markup=minecraft_menu_markup())
+            regru = _reg_client(context)
+            app_settings: AppSettings = context.application.bot_data["settings"]
+            try:
+                payload = await regru.fetch_reglets()
+            except RegRuClientError:
+                log.exception("fetch reglets failed before Minecraft tab")
+                await _open_minecraft_tab(q)
+                return
+            running = reglet_is_running_from_list_payload(
+                payload,
+                reglet_id=app_settings.reglet_id,
+            )
+            if running is False:
+                await q.edit_message_text(
+                    "Чтобы пользоваться разделом Minecraft, сначала включите VPS.",
+                    reply_markup=_minecraft_vps_off_markup(),
+                )
+                return
+            await _open_minecraft_tab(q)
             return
         if data == "nav:stack":
             await q.edit_message_text("Стек: выберите действие", reply_markup=_stack_menu_markup())
@@ -484,6 +524,22 @@ async def _handle_vps_button(
         return
     if data == "vps:start":
         await _post_vps_button_action(q, regru, RegletAction.START)
+        return
+    if data == "vps:start_from_mc":
+        await q.edit_message_text(
+            "VPS: отправляю start...",
+            reply_markup=_minecraft_vps_off_markup(),
+        )
+        try:
+            text = await regru.post_reglet_action(RegletAction.START)
+        except RegRuClientError:
+            log.exception("reglet start from Minecraft gate failed")
+            await q.edit_message_text(
+                "Панель недоступна или отклонила запрос. Повторите позже.",
+                reply_markup=_minecraft_vps_off_markup(),
+            )
+            return
+        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
         return
     if data == "vps:confirm_stop":
         await q.edit_message_text(

@@ -124,6 +124,37 @@ def format_reglet_telegram(
     return out.rstrip()
 
 
+def reglet_is_running_from_list_payload(
+    api_payload: Mapping[str, Any],
+    *,
+    reglet_id: int,
+) -> bool | None:
+    """По ответу ``GET /v1/reglets`` понять, включена ли виртуалка (доступна по панели).
+
+    Считаем «включённой» только ``status == active`` (как в типичном ответе Reg.ru CloudVPS).
+    При отсутствии reglet в списке или неверной структуре возвращаем ``None`` (неизвестно).
+
+    Args:
+        api_payload: JSON корня списка reglets.
+        reglet_id: Идентификатор reglet из настроек.
+
+    Returns:
+        ``True`` если статус ``active``, ``False`` если reglet найден и статус иной,
+        ``None`` если reglet не найден или нет поля ``reglets``-списка.
+    """
+    raw = api_payload.get("reglets")
+    if not isinstance(raw, list):
+        return None
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("id") != reglet_id:
+            continue
+        st = str(item.get("status") or "").strip().lower()
+        return st == "active"
+    return None
+
+
 def _truthy(x: object) -> bool:
     if x in (None, 0, "0", False, ""):
         return False
