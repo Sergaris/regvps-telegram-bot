@@ -1,6 +1,9 @@
 """Сводка по `GET /reglets` (укороченный JSON из API)."""
 
-from vps_telegram_bot.reglet_brief import format_reglet_telegram
+from vps_telegram_bot.reglet_brief import (
+    format_reglet_telegram,
+    reglet_is_running_from_list_payload,
+)
 
 _MINIMAL: dict = {
     "reglets": [
@@ -62,6 +65,31 @@ def test_format_reglet_telegram_includes_essentials() -> None:
 def test_format_reglet_missing() -> None:
     t = format_reglet_telegram({"reglets": []}, reglet_id=1)
     assert "не" in t.lower() or "нет" in t.lower() or "id = 1" in t
+
+
+def test_reglet_is_running_active_vs_off() -> None:
+    assert reglet_is_running_from_list_payload(_MINIMAL, reglet_id=7027955) is True
+    off = {
+        "reglets": [
+            {
+                "id": 7027955,
+                "name": "T",
+                "status": "off",
+                "region_slug": "r",
+                "memory": 1024,
+                "disk": 40,
+                "vcpus": 1,
+                "image": {"name": "i", "distribution": "u"},
+            }
+        ],
+        "links": {"actions": []},
+    }
+    assert reglet_is_running_from_list_payload(off, reglet_id=7027955) is False
+
+
+def test_reglet_is_running_unknown_when_missing() -> None:
+    assert reglet_is_running_from_list_payload({"reglets": []}, reglet_id=7027955) is None
+    assert reglet_is_running_from_list_payload({}, reglet_id=1) is None
 
 
 def test_detail_merges_disk_usage_gb() -> None:
