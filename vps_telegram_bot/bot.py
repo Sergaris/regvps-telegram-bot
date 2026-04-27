@@ -31,7 +31,7 @@ from vps_telegram_bot.regru_client import (
     format_balance_telegram,
 )
 from vps_telegram_bot.remote_mcops import run_remote_mcops
-from vps_telegram_bot.telegram_inline_kb import equal_width_inline_row
+from vps_telegram_bot.telegram_inline_kb import pad_message_for_inline_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -50,12 +50,10 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("VPS", callback_data="nav:vps"),
-                    InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("VPS", callback_data="nav:vps"),
+                InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
+            ],
             [InlineKeyboardButton("Админская чепуха", callback_data="nav:admin")],
         ]
     )
@@ -68,12 +66,10 @@ def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
     if is_running is True:
         return InlineKeyboardMarkup(
             [
-                equal_width_inline_row(
-                    [
-                        InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
-                        InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
-                    ]
-                ),
+                [
+                    InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                    InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
+                ],
                 back,
             ]
         )
@@ -87,12 +83,10 @@ def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Запуск", callback_data="vps:start")],
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
-                    InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
+            ],
             back,
         ]
     )
@@ -124,12 +118,10 @@ def _minecraft_vps_off_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            equal_width_inline_row(
-                [
-                    InlineKeyboardButton("Включить", callback_data="vps:start_from_mc"),
-                    InlineKeyboardButton("Назад", callback_data="nav:home"),
-                ]
-            ),
+            [
+                InlineKeyboardButton("Включить", callback_data="vps:start_from_mc"),
+                InlineKeyboardButton("Назад", callback_data="nav:home"),
+            ],
         ]
     )
 
@@ -137,7 +129,11 @@ def _minecraft_vps_off_markup() -> InlineKeyboardMarkup:
 async def _open_minecraft_tab(q: CallbackQuery) -> None:
     """Показать меню вкладки Minecraft (после проверки VPS или по «Открыть после запуска»)."""
 
-    await q.edit_message_text("Minecraft", reply_markup=minecraft_menu_markup())
+    mc_mk = minecraft_menu_markup()
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard("Minecraft", mc_mk),
+        reply_markup=mc_mk,
+    )
 
 
 async def _safe_answer_callback(q: CallbackQuery) -> None:
@@ -351,7 +347,11 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
         await _safe_answer_callback(q)
         data = q.data
         if data == "nav:home":
-            await q.edit_message_text("Главное меню", reply_markup=_home_menu_markup())
+            home_mk = _home_menu_markup()
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard("Главное меню", home_mk),
+                reply_markup=home_mk,
+            )
             return
         if data == "nav:vps":
             regru = _reg_client(context)
@@ -359,16 +359,25 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await _open_vps_tab(q, regru, app_settings)
             return
         if data == "nav:admin":
-            await q.edit_message_text("Админская чепуха", reply_markup=admin_menu_markup())
+            adm_mk = admin_menu_markup()
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard("Админская чепуха", adm_mk),
+                reply_markup=adm_mk,
+            )
             return
         if data == "nav:help":
             help_text = _full_help_ru(settings)
+            home_mk = _home_menu_markup()
             if len(help_text) <= 4096:
-                await q.edit_message_text(help_text, reply_markup=_home_menu_markup())
-            else:
                 await q.edit_message_text(
-                    "Полный список команд не влезает в одно сообщение. Отправьте /help",
-                    reply_markup=_home_menu_markup(),
+                    pad_message_for_inline_keyboard(help_text, home_mk),
+                    reply_markup=home_mk,
+                )
+            else:
+                short = "Полный список команд не влезает в одно сообщение. Отправьте /help"
+                await q.edit_message_text(
+                    pad_message_for_inline_keyboard(short, home_mk),
+                    reply_markup=home_mk,
                 )
             return
         if data == "nav:mc":
@@ -385,15 +394,23 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
                 reglet_id=app_settings.reglet_id,
             )
             if running is False:
+                gate_mk = _minecraft_vps_off_markup()
                 await q.edit_message_text(
-                    "Чтобы пользоваться разделом Minecraft, сначала включите VPS.",
-                    reply_markup=_minecraft_vps_off_markup(),
+                    pad_message_for_inline_keyboard(
+                        "Чтобы пользоваться разделом Minecraft, сначала включите VPS.",
+                        gate_mk,
+                    ),
+                    reply_markup=gate_mk,
                 )
                 return
             await _open_minecraft_tab(q)
             return
         if data == "nav:stack":
-            await q.edit_message_text("Стек: выберите действие", reply_markup=_stack_menu_markup())
+            stk_mk = _stack_menu_markup()
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard("Стек: выберите действие", stk_mk),
+                reply_markup=stk_mk,
+            )
             return
 
         if data.startswith("adm:"):
@@ -429,9 +446,11 @@ async def _open_vps_tab(
 
     await q.edit_message_text("Проверяю статус VPS...")
     running = await _fetch_reglet_running(regru, settings)
+    vps_mk = _vps_menu_markup(is_running=running)
+    title = _vps_tab_title(is_running=running)
     await q.edit_message_text(
-        _vps_tab_title(is_running=running),
-        reply_markup=_vps_menu_markup(is_running=running),
+        pad_message_for_inline_keyboard(title, vps_mk),
+        reply_markup=vps_mk,
     )
 
 
@@ -471,39 +490,59 @@ async def _handle_admin_button(
     markup = admin_menu_markup()
 
     if data == "adm:vps_status":
-        await q.edit_message_text("Запрашиваю статус VPS...", reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Запрашиваю статус VPS...", markup),
+            reply_markup=markup,
+        )
         text = await _fetch_vps_status_text(regru, settings)
-        await q.edit_message_text(text, reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, markup),
+            reply_markup=markup,
+        )
         return
     if data == "adm:vps_balance":
-        await q.edit_message_text("Запрашиваю баланс VPS...", reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Запрашиваю баланс VPS...", markup),
+            reply_markup=markup,
+        )
         try:
             text = format_balance_telegram(await regru.fetch_balance_data())
         except RegRuClientError:
             log.exception("fetch balance_data failed from admin button")
             text = "Панель недоступна или отклонила запрос. Повторите позже."
-        await q.edit_message_text(text, reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, markup),
+            reply_markup=markup,
+        )
         return
     if data == "adm:mc_status":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
-        await q.edit_message_text("Запрашиваю статус Minecraft...", reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Запрашиваю статус Minecraft...", markup),
+            reply_markup=markup,
+        )
         code, out, err = await run_remote_mcops(remote, ["status", "--json"])
         text = (
             out.strip()[:3500]
             if code == 0
             else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
         )
-        await q.edit_message_text(text, reply_markup=markup)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, markup),
+            reply_markup=markup,
+        )
         return
     if data == "adm:mods_plan":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -511,8 +550,9 @@ async def _handle_admin_button(
         return
     if data == "adm:confirm_mods_apply":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -520,8 +560,9 @@ async def _handle_admin_button(
         return
     if data == "adm:do_mods_apply":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -529,8 +570,9 @@ async def _handle_admin_button(
         return
     if data == "adm:backup_delete_menu":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -538,8 +580,9 @@ async def _handle_admin_button(
         return
     if data == "adm:world_regen_menu":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -547,8 +590,9 @@ async def _handle_admin_button(
         return
     if data == "adm:world_regen_confirm":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -556,8 +600,9 @@ async def _handle_admin_button(
         return
     if data == "adm:world_regen_do":
         if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
-                "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env).",
+                pad_message_for_inline_keyboard(ssh_msg, markup),
                 reply_markup=markup,
             )
             return
@@ -579,22 +624,25 @@ async def _handle_vps_button(
         return
     if data == "vps:info":
         running = await _fetch_reglet_running(regru, settings)
+        vps_mk = _vps_menu_markup(is_running=running)
         await q.edit_message_text(
-            "VPS: запрашиваю статус...",
-            reply_markup=_vps_menu_markup(is_running=running),
+            pad_message_for_inline_keyboard("VPS: запрашиваю статус...", vps_mk),
+            reply_markup=vps_mk,
         )
         text = await _fetch_vps_status_text(regru, settings)
         running_after = await _fetch_reglet_running(regru, settings)
+        vps_mk_after = _vps_menu_markup(is_running=running_after)
         await q.edit_message_text(
-            text,
-            reply_markup=_vps_menu_markup(is_running=running_after),
+            pad_message_for_inline_keyboard(text, vps_mk_after),
+            reply_markup=vps_mk_after,
         )
         return
     if data == "vps:balance":
         running = await _fetch_reglet_running(regru, settings)
+        vps_mk = _vps_menu_markup(is_running=running)
         await q.edit_message_text(
-            "VPS: запрашиваю баланс...",
-            reply_markup=_vps_menu_markup(is_running=running),
+            pad_message_for_inline_keyboard("VPS: запрашиваю баланс...", vps_mk),
+            reply_markup=vps_mk,
         )
         try:
             text = format_balance_telegram(await regru.fetch_balance_data())
@@ -602,60 +650,66 @@ async def _handle_vps_button(
             log.exception("fetch balance_data failed from button")
             text = "Панель недоступна или отклонила запрос. Повторите позже."
         running_after = await _fetch_reglet_running(regru, settings)
+        vps_mk_after = _vps_menu_markup(is_running=running_after)
         await q.edit_message_text(
-            text,
-            reply_markup=_vps_menu_markup(is_running=running_after),
+            pad_message_for_inline_keyboard(text, vps_mk_after),
+            reply_markup=vps_mk_after,
         )
         return
     if data == "vps:start":
         await _post_vps_button_action(q, regru, RegletAction.START, settings)
         return
     if data == "vps:start_from_mc":
+        gate_mk = _minecraft_vps_off_markup()
         await q.edit_message_text(
-            "VPS: отправляю start...",
-            reply_markup=_minecraft_vps_off_markup(),
+            pad_message_for_inline_keyboard("VPS: отправляю start...", gate_mk),
+            reply_markup=gate_mk,
         )
         try:
             text = await regru.post_reglet_action(RegletAction.START)
         except RegRuClientError:
             log.exception("reglet start from Minecraft gate failed")
+            gate_mk_err = _minecraft_vps_off_markup()
+            err_msg = "Панель недоступна или отклонила запрос. Повторите позже."
             await q.edit_message_text(
-                "Панель недоступна или отклонила запрос. Повторите позже.",
-                reply_markup=_minecraft_vps_off_markup(),
+                pad_message_for_inline_keyboard(err_msg, gate_mk_err),
+                reply_markup=gate_mk_err,
             )
             return
-        await q.edit_message_text(text, reply_markup=minecraft_menu_markup())
+        mc_mk = minecraft_menu_markup()
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, mc_mk),
+            reply_markup=mc_mk,
+        )
         return
     if data == "vps:confirm_stop":
-        await q.edit_message_text(
-            "Остановить VPS?",
-            reply_markup=InlineKeyboardMarkup(
+        confirm_mk = InlineKeyboardMarkup(
+            [
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
-                            InlineKeyboardButton("Назад", callback_data="vps:open"),
-                        ]
-                    ),
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
+                    InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
+                    InlineKeyboardButton("Назад", callback_data="vps:open"),
+                ],
+                [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            ]
+        )
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Остановить VPS?", confirm_mk),
+            reply_markup=confirm_mk,
         )
         return
     if data == "vps:confirm_reboot":
-        await q.edit_message_text(
-            "Перезагрузить VPS?",
-            reply_markup=InlineKeyboardMarkup(
+        confirm_mk = InlineKeyboardMarkup(
+            [
                 [
-                    equal_width_inline_row(
-                        [
-                            InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
-                            InlineKeyboardButton("Назад", callback_data="vps:open"),
-                        ]
-                    ),
-                    [InlineKeyboardButton("Домой", callback_data="nav:home")],
-                ]
-            ),
+                    InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
+                    InlineKeyboardButton("Назад", callback_data="vps:open"),
+                ],
+                [InlineKeyboardButton("Домой", callback_data="nav:home")],
+            ]
+        )
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Перезагрузить VPS?", confirm_mk),
+            reply_markup=confirm_mk,
         )
         return
     if data == "vps:do_stop":
@@ -674,9 +728,10 @@ async def _post_vps_button_action(
     """Post a Reg.ru action and keep the VPS menu attached."""
 
     running_before = await _fetch_reglet_running(regru, settings)
+    vps_mk_before = _vps_menu_markup(is_running=running_before)
     await q.edit_message_text(
-        f"VPS: отправляю {action.value}...",
-        reply_markup=_vps_menu_markup(is_running=running_before),
+        pad_message_for_inline_keyboard(f"VPS: отправляю {action.value}...", vps_mk_before),
+        reply_markup=vps_mk_before,
     )
     try:
         text = await regru.post_reglet_action(action)
@@ -684,9 +739,10 @@ async def _post_vps_button_action(
         log.exception("reglet action failed from button: %s", action)
         text = "Панель недоступна или отклонила запрос. Повторите позже."
     running_after = await _fetch_reglet_running(regru, settings)
+    vps_mk_after = _vps_menu_markup(is_running=running_after)
     await q.edit_message_text(
-        text,
-        reply_markup=_vps_menu_markup(is_running=running_after),
+        pad_message_for_inline_keyboard(text, vps_mk_after),
+        reply_markup=vps_mk_after,
     )
 
 
@@ -701,7 +757,11 @@ def _help_text_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
-        await m.reply_text(_start_brief_ru(), reply_markup=_home_menu_markup())
+        home_mk = _home_menu_markup()
+        await m.reply_text(
+            pad_message_for_inline_keyboard(_start_brief_ru(), home_mk),
+            reply_markup=home_mk,
+        )
 
     return handler
 
@@ -721,7 +781,11 @@ def _full_help_handler(
             return
         text = _full_help_ru(settings)
         if len(text) <= 4096:
-            await m.reply_text(text, reply_markup=_home_menu_markup())
+            home_mk = _home_menu_markup()
+            await m.reply_text(
+                pad_message_for_inline_keyboard(text, home_mk),
+                reply_markup=home_mk,
+            )
             return
         for chunk in _split_telegram_message_chunks(text, max_len=4000):
             await m.reply_text(chunk)
@@ -758,9 +822,10 @@ def _vps_command_handler(
         if u is not None and not _is_allowed(u.id, settings):
             await m.reply_text(_ACCESS_DENIED_RU)
             return
+        vps_mk = _vps_menu_markup(is_running=None)
         await m.reply_text(
-            "VPS",
-            reply_markup=_vps_menu_markup(is_running=None),
+            pad_message_for_inline_keyboard("VPS", vps_mk),
+            reply_markup=vps_mk,
         )
 
     return handler

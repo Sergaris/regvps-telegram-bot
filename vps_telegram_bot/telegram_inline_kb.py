@@ -1,19 +1,15 @@
 """Утилиты для inline-клавиатур Telegram.
 
-У клиента Telegram ширина кнопки в ряду задаётся содержимым текста; API не даёт
-фиксировать пиксели. Выравниваем подписи по «визуальной ширине» (East_Asian_Width)
-и дополняем короткие строки неразрывными пробелами (U+00A0), в конец добавляем
-невидимый U+200D, чтобы хвост не обрезался при отрисовке.
+Ширина области клавиатуры привязана к ширине текста сообщения над ней: короткий
+текст даёт узкую полосу кнопок и визуально разную ширину колонок. Дополняем текст
+сообщения невидимым padding (U+00A0 + U+200D), не меняя подписи кнопок.
 """
 
 import unicodedata
-from collections.abc import Sequence
 
-from telegram import InlineKeyboardButton
+from telegram import InlineKeyboardMarkup
 
-# Неразрывный пробел — ширина как у обычного пробела, Telegram не схлопывает подряд.
 _PADDING_NBSP = "\u00a0"
-# Zero-width joiner: невидимый «якорь» в конце padding (распространённый приём).
 _INVISIBLE_TAIL = "\u200d"
 
 
@@ -24,7 +20,7 @@ def visual_text_width(text: str) -> int:
         text: Произвольная Unicode-строка.
 
     Returns:
-        Целое число для сравнения длин подписей кнопок в одном ряду.
+        Целое число для сравнения длин строк.
     """
 
     total = 0
@@ -37,49 +33,60 @@ def visual_text_width(text: str) -> int:
     return total
 
 
-def pad_inline_button_labels_to_equal_width(labels: Sequence[str]) -> list[str]:
-    """Дополняет подписи в одном ряду до одинаковой визуальной ширины.
+def markup_min_message_visual_width(markup: InlineKeyboardMarkup) -> int:
+    """Минимальная визуальная ширина текста сообщения для ровной сетки клавиатуры.
+
+    Берётся максимум по рядам суммы визуальных ширин подписей кнопок в ряду —
+    грубая оценка «естественной» ширины клавиатуры по содержимому.
 
     Args:
-        labels: Тексты кнопок в одной строке клавиатуры.
+        markup: Разметка inline-клавиатуры.
 
     Returns:
-        Список строк той же длины; у коротких в конец добавлен padding и U+200D.
+        Ненотрицательное целое; для пустой клавиатуры 0.
     """
 
-    items = list(labels)
-    if len(items) <= 1:
-        return items
-    max_w = max(visual_text_width(s) for s in items)
+    max_sum = 0
+    for row in markup.inline_keyboard:
+        row_sum = sum(visual_text_width(btn.text) for btn in row)
+        if row_sum > max_sum:
+            max_sum = row_sum
+    return max_sum
+
+
+def pad_message_for_inline_keyboard(
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+) -> str:
+    """Расширяет текст сообщения, чтобы полоса кнопок не была уже текста.
+
+    Подписи кнопок не изменяются. Padding добавляется в конец последней строки
+    сообщения (или в одну строку, если текст пустой).
+
+    Args:
+        text: Текст сообщения, как у пользователя.
+        markup: Клавиатура под сообщением; при ``None`` возвращается ``text`` без изменений.
+
+    Returns:
+        Текст с невидимым хвостом при необходимости.
+    """
+
+    if markup is None or not markup.inline_keyboard:
+        return text
+    needed = markup_min_message_visual_width(markup)
+    if needed <= 0:
+        return text
+    lines = text.split("\n")
+    max_line_w = max((visual_text_width(line) for line in lines), default=0)
+    gap = needed - max_line_w
+    if gap <= 0:
+        return text
     tail_w = visual_text_width(_INVISIBLE_TAIL)
-    out: list[str] = []
-    for s in items:
-        gap = max_w - visual_text_width(s)
-        if gap <= 0:
-            out.append(s)
-            continue
-        nb = gap - tail_w
-        if nb < 0:
-            nb = 0
-        out.append(s + _PADDING_NBSP * nb + _INVISIBLE_TAIL)
-    return out
-
-
-def equal_width_inline_row(buttons: Sequence[InlineKeyboardButton]) -> list[InlineKeyboardButton]:
-    """Возвращает копии кнопок ряда с выровненным полем ``text``.
-
-    Args:
-        buttons: От одной кнопки и больше; при одной кнопке возвращается тот же список.
-
-    Returns:
-        Новые ``InlineKeyboardButton`` с теми же ``callback_data`` и новым ``text``.
-    """
-
-    btn_list = list(buttons)
-    if len(btn_list) <= 1:
-        return btn_list
-    padded = pad_inline_button_labels_to_equal_width([b.text for b in btn_list])
-    return [
-        InlineKeyboardButton(text=new_text, callback_data=b.callback_data)
-        for new_text, b in zip(padded, btn_list, strict=True)
-    ]
+    nb = gap - tail_w
+    if nb < 0:
+        nb = 0
+    pad = _PADDING_NBSP * nb + _INVISIBLE_TAIL
+    if not lines:
+        return pad
+    lines[-1] = lines[-1] + pad
+    return "\n".join(lines)
