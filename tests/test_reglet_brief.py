@@ -3,6 +3,7 @@
 from vps_telegram_bot.reglet_brief import (
     format_reglet_telegram,
     reglet_is_running_from_list_payload,
+    reglet_panel_action_in_progress_from_list_payload,
     reglet_start_in_progress_from_list_payload,
 )
 
@@ -93,7 +94,7 @@ def test_reglet_is_running_unknown_when_missing() -> None:
     assert reglet_is_running_from_list_payload({}, reglet_id=1) is None
 
 
-def test_reglet_start_in_progress_detects_start_action() -> None:
+def test_panel_action_in_progress_detects_start_action() -> None:
     pl = {
         "reglets": [
             {
@@ -118,12 +119,35 @@ def test_reglet_start_in_progress_detects_start_action() -> None:
             ]
         },
     }
+    assert reglet_panel_action_in_progress_from_list_payload(pl, reglet_id=7027955) is True
     assert reglet_start_in_progress_from_list_payload(pl, reglet_id=7027955) is True
     assert reglet_is_running_from_list_payload(pl, reglet_id=7027955) is False
 
 
-def test_reglet_start_in_progress_false_for_other_actions() -> None:
-    assert reglet_start_in_progress_from_list_payload(_MINIMAL, reglet_id=7027955) is False
+def test_panel_action_in_progress_detects_stop_and_matches_alias() -> None:
+    """Любой тип UseCase со статусом in-progress (не только старт)."""
+
+    assert reglet_panel_action_in_progress_from_list_payload(_MINIMAL, reglet_id=7027955) is True
+    assert reglet_start_in_progress_from_list_payload(_MINIMAL, reglet_id=7027955) is True
+
+
+def test_panel_action_in_progress_false_without_in_progress_action() -> None:
+    off = {
+        "reglets": [
+            {
+                "id": 7027955,
+                "name": "T",
+                "status": "off",
+                "region_slug": "r",
+                "memory": 1024,
+                "disk": 40,
+                "vcpus": 1,
+                "image": {"name": "i", "distribution": "u"},
+            }
+        ],
+        "links": {"actions": []},
+    }
+    assert reglet_panel_action_in_progress_from_list_payload(off, reglet_id=7027955) is False
 
 
 def test_detail_merges_disk_usage_gb() -> None:

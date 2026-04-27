@@ -25,7 +25,7 @@ from vps_telegram_bot.minecraft_handlers import (
 from vps_telegram_bot.reglet_brief import (
     format_reglet_telegram,
     reglet_is_running_from_list_payload,
-    reglet_start_in_progress_from_list_payload,
+    reglet_panel_action_in_progress_from_list_payload,
 )
 from vps_telegram_bot.regru_client import (
     RegletAction,
@@ -106,7 +106,7 @@ def _vps_tab_title(*, is_running: bool | None, is_starting: bool = False) -> str
     """Заголовок экрана VPS после проверки статуса."""
 
     if is_starting:
-        return "VPS: запуск в панели, подождите…"
+        return "VPS: операция в панели (in-progress), подождите…"
     if is_running is False:
         return "VPS выключен."
     return "VPS"
@@ -215,9 +215,9 @@ def _reglet_ui_starting(
     *,
     reglet_id: int,
 ) -> bool:
-    """Показывать ли экран «запуск в процессе» (панель или локальный флаг после POST)."""
+    """Показывать ли блокирующий экран (панель: ``in-progress`` или локальный флаг после POST)."""
 
-    if reglet_start_in_progress_from_list_payload(payload, reglet_id=reglet_id):
+    if reglet_panel_action_in_progress_from_list_payload(payload, reglet_id=reglet_id):
         return True
     running = reglet_is_running_from_list_payload(payload, reglet_id=reglet_id)
     if running is True:
@@ -477,8 +477,8 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
                 start_mk = _minecraft_vps_starting_markup()
                 await q.edit_message_text(
                     pad_message_for_inline_keyboard(
-                        "VPS сейчас запускается в панели. Подождите, пока машина станет доступной, "
-                        "затем снова откройте раздел Minecraft.",
+                        "В панели Reg.ru для VPS выполняется операция (in-progress). "
+                        "Подождите её завершения, затем снова откройте раздел Minecraft.",
                         start_mk,
                     ),
                     reply_markup=start_mk,
@@ -572,6 +572,26 @@ async def _open_vps_tab(
     )
 
 
+def _vps_panel_in_progress_banner(
+    payload: Mapping[str, Any] | None,
+    settings: AppSettings,
+) -> str:
+    """Префикс к тексту статуса VPS, если в ``links.actions`` есть ``in-progress`` для reglet."""
+
+    if payload is None:
+        return ""
+    if not reglet_panel_action_in_progress_from_list_payload(
+        payload,
+        reglet_id=settings.reglet_id,
+    ):
+        return ""
+    return (
+        "В панели Reg.ru выполняется операция над VPS (in-progress). "
+        "Поле «Статус» в сводке может ещё не отражать итог — ориентируйтесь на строку "
+        "«Панель: … in-progress» ниже.\n\n"
+    )
+
+
 async def _fetch_vps_status_text(regru: RegRuClient, settings: AppSettings) -> str:
     """Текст сводки VPS для кнопок и админ-панели."""
 
@@ -585,11 +605,12 @@ async def _fetch_vps_status_text(regru: RegRuClient, settings: AppSettings) -> s
                 reglet_detail = r
         except RegRuClientError:
             pass
-        return format_reglet_telegram(
+        body = format_reglet_telegram(
             payload,
             reglet_id=settings.reglet_id,
             reglet_detail=reglet_detail,
         )
+        return _vps_panel_in_progress_banner(payload, settings) + body
     except RegRuClientError:
         log.exception("fetch reglets failed from admin/vps button")
         return "Панель недоступна или отклонила запрос. Повторите позже."
@@ -813,7 +834,7 @@ async def _handle_vps_button(
         _mark_reglet_start_pending_for_user(context, user_id)
         body = (
             f"{text}\n\n"
-            "VPS в статусе запуска. Дождитесь, пока машина станет доступной, "
+            "Дождитесь завершения операции в панели (in-progress), "
             "затем снова откройте раздел Minecraft из главного меню."
         )
         await q.edit_message_text(
