@@ -31,6 +31,7 @@ from vps_telegram_bot.regru_client import (
     format_balance_telegram,
 )
 from vps_telegram_bot.remote_mcops import run_remote_mcops
+from vps_telegram_bot.telegram_inline_kb import equal_width_inline_row
 
 log = logging.getLogger(__name__)
 
@@ -49,10 +50,12 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("VPS", callback_data="nav:vps"),
-                InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("VPS", callback_data="nav:vps"),
+                    InlineKeyboardButton("Minecraft", callback_data="nav:mc"),
+                ]
+            ),
             [InlineKeyboardButton("Админская чепуха", callback_data="nav:admin")],
         ]
     )
@@ -65,10 +68,12 @@ def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
     if is_running is True:
         return InlineKeyboardMarkup(
             [
-                [
-                    InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
-                    InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
-                ],
+                equal_width_inline_row(
+                    [
+                        InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                        InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
+                    ]
+                ),
                 back,
             ]
         )
@@ -82,10 +87,12 @@ def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Запуск", callback_data="vps:start")],
-            [
-                InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
-                InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Перезапуск", callback_data="vps:confirm_reboot"),
+                    InlineKeyboardButton("Стоп", callback_data="vps:confirm_stop"),
+                ]
+            ),
             back,
         ]
     )
@@ -117,10 +124,12 @@ def _minecraft_vps_off_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("Включить", callback_data="vps:start_from_mc"),
-                InlineKeyboardButton("Назад", callback_data="nav:home"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Включить", callback_data="vps:start_from_mc"),
+                    InlineKeyboardButton("Назад", callback_data="nav:home"),
+                ]
+            ),
         ]
     )
 
@@ -622,10 +631,12 @@ async def _handle_vps_button(
             "Остановить VPS?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
-                        InlineKeyboardButton("Назад", callback_data="vps:open"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton("Да, остановить", callback_data="vps:do_stop"),
+                            InlineKeyboardButton("Назад", callback_data="vps:open"),
+                        ]
+                    ),
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             ),
@@ -636,10 +647,12 @@ async def _handle_vps_button(
             "Перезагрузить VPS?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
-                        InlineKeyboardButton("Назад", callback_data="vps:open"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton("Да, reboot", callback_data="vps:do_reboot"),
+                            InlineKeyboardButton("Назад", callback_data="vps:open"),
+                        ]
+                    ),
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             ),

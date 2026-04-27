@@ -1,6 +1,7 @@
 """Загрузка настроек из окружения."""
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -132,6 +133,15 @@ def _parse_positive_float(
     return value
 
 
+def _expand_windows_style_env_vars(text: str) -> str:
+    """Подставить ``%VAR%`` из окружения (в т.ч. на Linux, где нет ``cmd``-синтаксиса)."""
+
+    def _replace(match: re.Match[str]) -> str:
+        return os.environ.get(match.group(1), match.group(0))
+
+    return re.sub(r"%([^%]+)%", _replace, text)
+
+
 def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
     """Разобрать SSH-настройки для ``mcops`` или вернуть ``None``."""
 
@@ -152,7 +162,8 @@ def _parse_mcops_remote(env: dict[str, str]) -> McopsRemoteSettings | None:
         raise ValueError(msg)
     path: Path | None = None
     if identity:
-        path = Path(os.path.expandvars(identity)).expanduser()
+        expanded = _expand_windows_style_env_vars(identity).replace("\\", "/")
+        path = Path(os.path.expandvars(expanded)).expanduser()
         if not path.is_file():
             msg = f"MCOPS_SSH_IDENTITY_FILE is not a file: {path}"
             raise ValueError(msg)
