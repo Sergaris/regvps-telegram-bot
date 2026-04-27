@@ -1,8 +1,11 @@
 """Утилиты для inline-клавиатур Telegram.
 
-Ширина области клавиатуры привязана к ширине текста сообщения над ней: короткий
-текст даёт узкую полосу кнопок и визуально разную ширину колонок. Дополняем текст
-сообщения невидимым padding (U+00A0 + U+200D), не меняя подписи кнопок.
+Ширина полосы inline-клавиатуры следует за шириной текста сообщения над ней.
+Дополняем текст невидимым padding (U+00A0 + U+200D), не меняя подписи кнопок.
+
+Чтобы все экраны с меню выглядели одной ширины, используется общий пол
+``UNIFIED_INLINE_MENU_MIN_VISUAL_WIDTH``: минимальная визуальная ширина текста
+не ниже этого значения и не ниже оценки по текущей клавиатуре.
 """
 
 import unicodedata
@@ -11,6 +14,10 @@ from telegram import InlineKeyboardMarkup
 
 _PADDING_NBSP = "\u00a0"
 _INVISIBLE_TAIL = "\u200d"
+
+# Самый широкий типовой ряд двух кнопок в боте (EAW): «Да, новый мир…» + «Отмена».
+# Динамические списки бэкапов могут быть шире — тогда сработает max с разметкой.
+UNIFIED_INLINE_MENU_MIN_VISUAL_WIDTH = 35
 
 
 def visual_text_width(text: str) -> int:
@@ -34,10 +41,9 @@ def visual_text_width(text: str) -> int:
 
 
 def markup_min_message_visual_width(markup: InlineKeyboardMarkup) -> int:
-    """Минимальная визуальная ширина текста сообщения для ровной сетки клавиатуры.
+    """Минимальная визуальная ширина текста для ровной сетки данной клавиатуры.
 
-    Берётся максимум по рядам суммы визуальных ширин подписей кнопок в ряду —
-    грубая оценка «естественной» ширины клавиатуры по содержимому.
+    Берётся максимум по рядам суммы визуальных ширин подписей кнопок в ряду.
 
     Args:
         markup: Разметка inline-клавиатуры.
@@ -58,10 +64,11 @@ def pad_message_for_inline_keyboard(
     text: str,
     markup: InlineKeyboardMarkup | None,
 ) -> str:
-    """Расширяет текст сообщения, чтобы полоса кнопок не была уже текста.
+    """Расширяет текст сообщения под единую ширину меню и под текущую клавиатуру.
 
-    Подписи кнопок не изменяются. Padding добавляется в конец последней строки
-    сообщения (или в одну строку, если текст пустой).
+    Подписи кнопок не изменяются. Невидимый padding дописывается к **самой
+    длинной** строке текста (по визуальной ширине), чтобы ширина пузыря
+    выросла корректно и при нескольких строках.
 
     Args:
         text: Текст сообщения, как у пользователя.
@@ -73,12 +80,16 @@ def pad_message_for_inline_keyboard(
 
     if markup is None or not markup.inline_keyboard:
         return text
-    needed = markup_min_message_visual_width(markup)
+    from_markup = markup_min_message_visual_width(markup)
+    needed = max(UNIFIED_INLINE_MENU_MIN_VISUAL_WIDTH, from_markup)
     if needed <= 0:
         return text
     lines = text.split("\n")
-    max_line_w = max((visual_text_width(line) for line in lines), default=0)
-    gap = needed - max_line_w
+    if not lines:
+        lines = [""]
+    widths = [visual_text_width(line) for line in lines]
+    max_w = max(widths)
+    gap = needed - max_w
     if gap <= 0:
         return text
     tail_w = visual_text_width(_INVISIBLE_TAIL)
@@ -86,7 +97,10 @@ def pad_message_for_inline_keyboard(
     if nb < 0:
         nb = 0
     pad = _PADDING_NBSP * nb + _INVISIBLE_TAIL
-    if not lines:
-        return pad
-    lines[-1] = lines[-1] + pad
+    # Паддим самую широкую строку (последнюю при равенстве — стабильнее для UX).
+    best_i = len(lines) - 1
+    for i, w in enumerate(widths):
+        if w >= widths[best_i]:
+            best_i = i
+    lines[best_i] = lines[best_i] + pad
     return "\n".join(lines)
