@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
@@ -118,9 +119,7 @@ _WORLD_REGEN_INTRO_RU = (
     "Мир будет удалён без tar-бэкапа.\n\n"
     "Кнопка «Дальше» ниже запускает перегенерацию со случайным сидом.\n\n"
     "Свой сид — выполните в чате:\n"
-    "```\n"
-    "/mc_world_regen confirm ваш_сид\n"
-    "```"
+    "<pre>/mc_world_regen confirm ваш_сид</pre>"
 )
 
 _WORLD_REGEN_MID_RU = (
@@ -284,6 +283,7 @@ async def admin_world_regen_show_intro(q: CallbackQuery) -> None:
     await q.edit_message_text(
         pad_message_for_inline_keyboard(_WORLD_REGEN_INTRO_RU, step1_mk),
         reply_markup=step1_mk,
+        parse_mode=ParseMode.HTML,
     )
 
 
