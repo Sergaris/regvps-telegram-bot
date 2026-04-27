@@ -17,6 +17,7 @@ from vps_telegram_bot.config import AppSettings, McopsRemoteSettings
 from vps_telegram_bot.reglet_brief import format_reglet_telegram
 from vps_telegram_bot.regru_client import RegletAction, RegRuClient, RegRuClientError
 from vps_telegram_bot.remote_mcops import run_remote_mcops
+from vps_telegram_bot.telegram_inline_kb import equal_width_inline_row
 
 log = logging.getLogger(__name__)
 
@@ -71,15 +72,19 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("Статус VPS", callback_data="adm:vps_status"),
-                InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Статус VPS", callback_data="adm:vps_status"),
+                    InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
+                ]
+            ),
             [InlineKeyboardButton("Баланс VPS", callback_data="adm:vps_balance")],
-            [
-                InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
-                InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
+                    InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
+                ]
+            ),
             [InlineKeyboardButton("Удалить бэкап", callback_data="adm:backup_delete_menu")],
             [InlineKeyboardButton("Перегенерить мир", callback_data="adm:world_regen_menu")],
             [InlineKeyboardButton("Назад", callback_data="nav:home")],
@@ -118,13 +123,15 @@ def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "Да, новый мир (случайный сид)",
-                    callback_data="adm:world_regen_do",
-                ),
-                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton(
+                        "Да, новый мир (случайный сид)",
+                        callback_data="adm:world_regen_do",
+                    ),
+                    InlineKeyboardButton("Отмена", callback_data="nav:admin"),
+                ]
+            ),
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -135,10 +142,12 @@ def admin_mods_apply_confirm_markup() -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("Да, обновить моды", callback_data="adm:do_mods_apply"),
-                InlineKeyboardButton("Назад", callback_data="nav:admin"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Да, обновить моды", callback_data="adm:do_mods_apply"),
+                    InlineKeyboardButton("Назад", callback_data="nav:admin"),
+                ]
+            ),
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -286,10 +295,12 @@ def _manual_backup_markup(
     slots = _manual_slot_labels(rows or [])
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(slots["manual-1"], callback_data="mcm:manual-1"),
-                InlineKeyboardButton(slots["manual-2"], callback_data="mcm:manual-2"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton(slots["manual-1"], callback_data="mcm:manual-1"),
+                    InlineKeyboardButton(slots["manual-2"], callback_data="mcm:manual-2"),
+                ]
+            ),
             [InlineKeyboardButton(slots["manual-3"], callback_data="mcm:manual-3")],
             [InlineKeyboardButton("Назад", callback_data="nav:mc")],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
@@ -300,10 +311,12 @@ def _manual_backup_markup(
 def _manual_overwrite_confirm_markup(slot: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton("Да, перезаписать", callback_data=f"mcmy:{slot}"),
-                InlineKeyboardButton("Назад", callback_data="mc:manual_menu"),
-            ],
+            equal_width_inline_row(
+                [
+                    InlineKeyboardButton("Да, перезаписать", callback_data=f"mcmy:{slot}"),
+                    InlineKeyboardButton("Назад", callback_data="mc:manual_menu"),
+                ]
+            ),
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
     )
@@ -471,10 +484,12 @@ def _admin_backup_delete_callback_router(settings: AppSettings) -> Handler:
             eid, label = catalog[idx]
             kb = InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, удалить", callback_data=f"aby:{token}:{idx}"),
-                        InlineKeyboardButton("Отмена", callback_data=f"abx:{token}:{idx}"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton("Да, удалить", callback_data=f"aby:{token}:{idx}"),
+                            InlineKeyboardButton("Отмена", callback_data=f"abx:{token}:{idx}"),
+                        ]
+                    ),
                     [InlineKeyboardButton("К списку", callback_data="adm:backup_delete_menu")],
                     [InlineKeyboardButton("К админке", callback_data="nav:admin")],
                 ]
@@ -1002,10 +1017,12 @@ async def _handle_minecraft_button(
             "Остановить Minecraft?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, остановить", callback_data="mc:do_stop"),
-                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton("Да, остановить", callback_data="mc:do_stop"),
+                            InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                        ]
+                    ),
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             ),
@@ -1017,10 +1034,12 @@ async def _handle_minecraft_button(
             "Перезапустить Minecraft?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, restart", callback_data="mc:do_restart"),
-                        InlineKeyboardButton("Назад", callback_data="nav:mc"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton("Да, restart", callback_data="mc:do_restart"),
+                            InlineKeyboardButton("Назад", callback_data="nav:mc"),
+                        ]
+                    ),
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             ),
@@ -1173,10 +1192,15 @@ async def _handle_stack_button(
             "Остановить Minecraft, затем VPS?",
             reply_markup=InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, остановить стек", callback_data="stk:do_stop"),
-                        InlineKeyboardButton("Назад", callback_data="nav:stack"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton(
+                                "Да, остановить стек",
+                                callback_data="stk:do_stop",
+                            ),
+                            InlineKeyboardButton("Назад", callback_data="nav:stack"),
+                        ]
+                    ),
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
             ),
@@ -1279,10 +1303,18 @@ def _minecraft_callback_router(settings: AppSettings) -> Handler:
             eid, label = catalog[idx]
             kb = InlineKeyboardMarkup(
                 [
-                    [
-                        InlineKeyboardButton("Да, откатить", callback_data=f"mcy:{token}:{idx}"),
-                        InlineKeyboardButton("Отмена", callback_data=f"mcn:{token}:{idx}"),
-                    ],
+                    equal_width_inline_row(
+                        [
+                            InlineKeyboardButton(
+                                "Да, откатить",
+                                callback_data=f"mcy:{token}:{idx}",
+                            ),
+                            InlineKeyboardButton(
+                                "Отмена",
+                                callback_data=f"mcn:{token}:{idx}",
+                            ),
+                        ]
+                    ),
                     [InlineKeyboardButton("Назад", callback_data="mc:backups")],
                     [InlineKeyboardButton("Домой", callback_data="nav:home")],
                 ]
