@@ -442,9 +442,8 @@ async def _open_vps_tab(
     regru: RegRuClient,
     settings: AppSettings,
 ) -> None:
-    """Показать экран VPS после запроса статуса к панели."""
+    """Показать экран VPS после запроса статуса к панели (без промежуточного текста)."""
 
-    await q.edit_message_text("Проверяю статус VPS...")
     running = await _fetch_reglet_running(regru, settings)
     vps_mk = _vps_menu_markup(is_running=running)
     title = _vps_tab_title(is_running=running)
