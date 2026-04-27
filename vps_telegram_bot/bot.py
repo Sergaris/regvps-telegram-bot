@@ -1,7 +1,9 @@
 """Регистрация команд Telegram и проверка allowlist."""
 
 import logging
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, cast
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import NetworkError, TelegramError, TimedOut
@@ -23,6 +25,7 @@ from vps_telegram_bot.minecraft_handlers import (
 from vps_telegram_bot.reglet_brief import (
     format_reglet_telegram,
     reglet_is_running_from_list_payload,
+    reglet_panel_action_in_progress_from_list_payload,
 )
 from vps_telegram_bot.regru_client import (
     RegletAction,
@@ -37,6 +40,11 @@ log = logging.getLogger(__name__)
 
 # Сокращение для сигнатур обработчиков (ruff E501)
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+
+# После успешного POST start панель иногда ещё не отражает операцию в ``links.actions``:
+# держим «запуск в процессе» для UI, пока не истечёт TTL или VPS не станет active.
+_REGLET_PENDING_START_KEY = "reglet_pending_start_monotonic"
+_REGLET_PENDING_START_TTL_SEC = 900.0
 
 _ACCESS_DENIED_RU = "Нет доступа. Этот бот только для списка доверенных."
 _TG_NET_FAIL_RU = (
@@ -59,10 +67,12 @@ def _home_menu_markup() -> InlineKeyboardMarkup:
     )
 
 
-def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
+def _vps_menu_markup(*, is_running: bool | None, is_starting: bool = False) -> InlineKeyboardMarkup:
     """Меню действий с Reg.ru VPS: кнопки зависят от статуса (вкл. / выкл. / неизвестно)."""
 
     back = [InlineKeyboardButton("Назад", callback_data="nav:home")]
+    if is_starting:
+        return InlineKeyboardMarkup([back])
     if is_running is True:
         return InlineKeyboardMarkup(
             [
@@ -92,9 +102,11 @@ def _vps_menu_markup(*, is_running: bool | None) -> InlineKeyboardMarkup:
     )
 
 
-def _vps_tab_title(*, is_running: bool | None) -> str:
+def _vps_tab_title(*, is_running: bool | None, is_starting: bool = False) -> str:
     """Заголовок экрана VPS после проверки статуса."""
 
+    if is_starting:
+        return "VPS: операция в панели (in-progress), подождите…"
     if is_running is False:
         return "VPS выключен."
     return "VPS"
@@ -126,6 +138,16 @@ def _minecraft_vps_off_markup() -> InlineKeyboardMarkup:
     )
 
 
+def _minecraft_vps_starting_markup() -> InlineKeyboardMarkup:
+    """Экран «VPS запускается» в разделе Minecraft (без повторного «Включить»)."""
+
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Назад", callback_data="nav:home")],
+        ]
+    )
+
+
 async def _open_minecraft_tab(q: CallbackQuery) -> None:
     """Показать меню вкладки Minecraft (после проверки VPS или по «Открыть после запуска»)."""
 
@@ -147,6 +169,60 @@ async def _safe_answer_callback(q: CallbackQuery) -> None:
 
 def _is_allowed(effective_user_id: int, settings: AppSettings) -> bool:
     return effective_user_id in settings.allowed_telegram_user_ids
+
+
+def _reglet_pending_start_deadlines(context: ContextTypes.DEFAULT_TYPE) -> dict[int, float]:
+    """Монотонные дедлайны «после POST start ждём active» по user_id (локально процессу)."""
+
+    raw = context.application.bot_data.setdefault(_REGLET_PENDING_START_KEY, {})
+    if not isinstance(raw, dict):
+        fresh: dict[int, float] = {}
+        context.application.bot_data[_REGLET_PENDING_START_KEY] = fresh
+        return fresh
+    return cast("dict[int, float]", raw)
+
+
+def _mark_reglet_start_pending_for_user(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """Запомнить, что пользователь только что запросил старт VPS (до появления active в API)."""
+
+    until = time.monotonic() + _REGLET_PENDING_START_TTL_SEC
+    _reglet_pending_start_deadlines(context)[user_id] = until
+
+
+def _clear_reglet_start_pending_for_user(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """Снять локальный флаг ожидания старта для пользователя."""
+
+    _reglet_pending_start_deadlines(context).pop(user_id, None)
+
+
+def _reglet_start_pending_for_user(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Есть ли ещё действующий локальный флаг «старт запрошен»."""
+
+    deadlines = _reglet_pending_start_deadlines(context)
+    until = deadlines.get(user_id)
+    if until is None:
+        return False
+    if time.monotonic() > until:
+        deadlines.pop(user_id, None)
+        return False
+    return True
+
+
+def _reglet_ui_starting(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    payload: Mapping[str, Any],
+    *,
+    reglet_id: int,
+) -> bool:
+    """Показывать ли блокирующий экран (панель: ``in-progress`` или локальный флаг после POST)."""
+
+    if reglet_panel_action_in_progress_from_list_payload(payload, reglet_id=reglet_id):
+        return True
+    running = reglet_is_running_from_list_payload(payload, reglet_id=reglet_id)
+    if running is True:
+        return False
+    return _reglet_start_pending_for_user(context, user_id)
 
 
 def _reg_client(context: ContextTypes.DEFAULT_TYPE) -> RegRuClient:
@@ -356,7 +432,8 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
         if data == "nav:vps":
             regru = _reg_client(context)
             app_settings: AppSettings = context.application.bot_data["settings"]
-            await _open_vps_tab(q, regru, app_settings)
+            uid = u.id
+            await _open_vps_tab(q, regru, app_settings, context, uid)
             return
         if data == "nav:admin":
             adm_mk = admin_menu_markup()
@@ -383,6 +460,7 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
         if data == "nav:mc":
             regru = _reg_client(context)
             app_settings: AppSettings = context.application.bot_data["settings"]
+            uid = u.id
             try:
                 payload = await regru.fetch_reglets()
             except RegRuClientError:
@@ -393,6 +471,19 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
                 payload,
                 reglet_id=app_settings.reglet_id,
             )
+            if running is True:
+                _clear_reglet_start_pending_for_user(context, uid)
+            if _reglet_ui_starting(context, uid, payload, reglet_id=app_settings.reglet_id):
+                start_mk = _minecraft_vps_starting_markup()
+                await q.edit_message_text(
+                    pad_message_for_inline_keyboard(
+                        "В панели Reg.ru для VPS выполняется операция (in-progress). "
+                        "Подождите её завершения, затем снова откройте раздел Minecraft.",
+                        start_mk,
+                    ),
+                    reply_markup=start_mk,
+                )
+                return
             if running is False:
                 gate_mk = _minecraft_vps_off_markup()
                 await q.edit_message_text(
@@ -423,13 +514,21 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
     return handler
 
 
+async def _fetch_reglets_payload(regru: RegRuClient) -> Mapping[str, Any] | None:
+    """Загрузить JSON списка reglets или ``None`` при ошибке API."""
+
+    try:
+        return await regru.fetch_reglets()
+    except RegRuClientError:
+        log.exception("fetch reglets failed for VPS menu state")
+        return None
+
+
 async def _fetch_reglet_running(regru: RegRuClient, settings: AppSettings) -> bool | None:
     """Узнать по списку reglets, включена ли виртуалка (``active``)."""
 
-    try:
-        payload = await regru.fetch_reglets()
-    except RegRuClientError:
-        log.exception("fetch reglets failed for VPS menu state")
+    payload = await _fetch_reglets_payload(regru)
+    if payload is None:
         return None
     return reglet_is_running_from_list_payload(
         payload,
@@ -437,19 +536,59 @@ async def _fetch_reglet_running(regru: RegRuClient, settings: AppSettings) -> bo
     )
 
 
+def _vps_tab_state_from_payload(
+    payload: Mapping[str, Any] | None,
+    settings: AppSettings,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> tuple[bool | None, bool]:
+    """Состояние для экрана VPS: ``running`` и флаг «идёт запуск» (панель или локальный TTL)."""
+
+    if payload is None:
+        return None, _reglet_start_pending_for_user(context, user_id)
+    running = reglet_is_running_from_list_payload(payload, reglet_id=settings.reglet_id)
+    if running is True:
+        _clear_reglet_start_pending_for_user(context, user_id)
+    is_starting = _reglet_ui_starting(context, user_id, payload, reglet_id=settings.reglet_id)
+    return running, is_starting
+
+
 async def _open_vps_tab(
     q: CallbackQuery,
     regru: RegRuClient,
     settings: AppSettings,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
 ) -> None:
     """Показать экран VPS после запроса статуса к панели (без промежуточного текста)."""
 
-    running = await _fetch_reglet_running(regru, settings)
-    vps_mk = _vps_menu_markup(is_running=running)
-    title = _vps_tab_title(is_running=running)
+    payload = await _fetch_reglets_payload(regru)
+    running, is_starting = _vps_tab_state_from_payload(payload, settings, context, user_id)
+    vps_mk = _vps_menu_markup(is_running=running, is_starting=is_starting)
+    title = _vps_tab_title(is_running=running, is_starting=is_starting)
     await q.edit_message_text(
         pad_message_for_inline_keyboard(title, vps_mk),
         reply_markup=vps_mk,
+    )
+
+
+def _vps_panel_in_progress_banner(
+    payload: Mapping[str, Any] | None,
+    settings: AppSettings,
+) -> str:
+    """Префикс к тексту статуса VPS, если в ``links.actions`` есть ``in-progress`` для reglet."""
+
+    if payload is None:
+        return ""
+    if not reglet_panel_action_in_progress_from_list_payload(
+        payload,
+        reglet_id=settings.reglet_id,
+    ):
+        return ""
+    return (
+        "В панели Reg.ru выполняется операция над VPS (in-progress). "
+        "Поле «Статус» в сводке может ещё не отражать итог — ориентируйтесь на строку "
+        "«Панель: … in-progress» ниже.\n\n"
     )
 
 
@@ -466,11 +605,12 @@ async def _fetch_vps_status_text(regru: RegRuClient, settings: AppSettings) -> s
                 reglet_detail = r
         except RegRuClientError:
             pass
-        return format_reglet_telegram(
+        body = format_reglet_telegram(
             payload,
             reglet_id=settings.reglet_id,
             reglet_detail=reglet_detail,
         )
+        return _vps_panel_in_progress_banner(payload, settings) + body
     except RegRuClientError:
         log.exception("fetch reglets failed from admin/vps button")
         return "Панель недоступна или отклонила запрос. Повторите позже."
@@ -618,27 +758,37 @@ async def _handle_vps_button(
 
     regru = _reg_client(context)
     settings: AppSettings = context.application.bot_data["settings"]
+    u = q.from_user
+    user_id = u.id if u is not None else 0
     if data == "vps:open":
-        await _open_vps_tab(q, regru, settings)
+        await _open_vps_tab(q, regru, settings, context, user_id)
         return
     if data == "vps:info":
-        running = await _fetch_reglet_running(regru, settings)
-        vps_mk = _vps_menu_markup(is_running=running)
+        payload = await _fetch_reglets_payload(regru)
+        running, is_starting = _vps_tab_state_from_payload(payload, settings, context, user_id)
+        vps_mk = _vps_menu_markup(is_running=running, is_starting=is_starting)
         await q.edit_message_text(
             pad_message_for_inline_keyboard("VPS: запрашиваю статус...", vps_mk),
             reply_markup=vps_mk,
         )
         text = await _fetch_vps_status_text(regru, settings)
-        running_after = await _fetch_reglet_running(regru, settings)
-        vps_mk_after = _vps_menu_markup(is_running=running_after)
+        payload_after = await _fetch_reglets_payload(regru)
+        running_after, is_starting_after = _vps_tab_state_from_payload(
+            payload_after,
+            settings,
+            context,
+            user_id,
+        )
+        vps_mk_after = _vps_menu_markup(is_running=running_after, is_starting=is_starting_after)
         await q.edit_message_text(
             pad_message_for_inline_keyboard(text, vps_mk_after),
             reply_markup=vps_mk_after,
         )
         return
     if data == "vps:balance":
-        running = await _fetch_reglet_running(regru, settings)
-        vps_mk = _vps_menu_markup(is_running=running)
+        payload = await _fetch_reglets_payload(regru)
+        running, is_starting = _vps_tab_state_from_payload(payload, settings, context, user_id)
+        vps_mk = _vps_menu_markup(is_running=running, is_starting=is_starting)
         await q.edit_message_text(
             pad_message_for_inline_keyboard("VPS: запрашиваю баланс...", vps_mk),
             reply_markup=vps_mk,
@@ -648,21 +798,27 @@ async def _handle_vps_button(
         except RegRuClientError:
             log.exception("fetch balance_data failed from button")
             text = "Панель недоступна или отклонила запрос. Повторите позже."
-        running_after = await _fetch_reglet_running(regru, settings)
-        vps_mk_after = _vps_menu_markup(is_running=running_after)
+        payload_after = await _fetch_reglets_payload(regru)
+        running_after, is_starting_after = _vps_tab_state_from_payload(
+            payload_after,
+            settings,
+            context,
+            user_id,
+        )
+        vps_mk_after = _vps_menu_markup(is_running=running_after, is_starting=is_starting_after)
         await q.edit_message_text(
             pad_message_for_inline_keyboard(text, vps_mk_after),
             reply_markup=vps_mk_after,
         )
         return
     if data == "vps:start":
-        await _post_vps_button_action(q, regru, RegletAction.START, settings)
+        await _post_vps_button_action(q, regru, RegletAction.START, settings, context, user_id)
         return
     if data == "vps:start_from_mc":
-        gate_mk = _minecraft_vps_off_markup()
+        start_wait_mk = _minecraft_vps_starting_markup()
         await q.edit_message_text(
-            pad_message_for_inline_keyboard("VPS: отправляю start...", gate_mk),
-            reply_markup=gate_mk,
+            pad_message_for_inline_keyboard("VPS: отправляю start...", start_wait_mk),
+            reply_markup=start_wait_mk,
         )
         try:
             text = await regru.post_reglet_action(RegletAction.START)
@@ -675,10 +831,15 @@ async def _handle_vps_button(
                 reply_markup=gate_mk_err,
             )
             return
-        mc_mk = minecraft_menu_markup()
+        _mark_reglet_start_pending_for_user(context, user_id)
+        body = (
+            f"{text}\n\n"
+            "Дождитесь завершения операции в панели (in-progress), "
+            "затем снова откройте раздел Minecraft из главного меню."
+        )
         await q.edit_message_text(
-            pad_message_for_inline_keyboard(text, mc_mk),
-            reply_markup=mc_mk,
+            pad_message_for_inline_keyboard(body, start_wait_mk),
+            reply_markup=start_wait_mk,
         )
         return
     if data == "vps:confirm_stop":
@@ -712,10 +873,10 @@ async def _handle_vps_button(
         )
         return
     if data == "vps:do_stop":
-        await _post_vps_button_action(q, regru, RegletAction.STOP, settings)
+        await _post_vps_button_action(q, regru, RegletAction.STOP, settings, context, user_id)
         return
     if data == "vps:do_reboot":
-        await _post_vps_button_action(q, regru, RegletAction.REBOOT, settings)
+        await _post_vps_button_action(q, regru, RegletAction.REBOOT, settings, context, user_id)
 
 
 async def _post_vps_button_action(
@@ -723,11 +884,19 @@ async def _post_vps_button_action(
     regru: RegRuClient,
     action: RegletAction,
     settings: AppSettings,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
 ) -> None:
     """Post a Reg.ru action and keep the VPS menu attached."""
 
-    running_before = await _fetch_reglet_running(regru, settings)
-    vps_mk_before = _vps_menu_markup(is_running=running_before)
+    payload_before = await _fetch_reglets_payload(regru)
+    running_before, is_starting_before = _vps_tab_state_from_payload(
+        payload_before,
+        settings,
+        context,
+        user_id,
+    )
+    vps_mk_before = _vps_menu_markup(is_running=running_before, is_starting=is_starting_before)
     await q.edit_message_text(
         pad_message_for_inline_keyboard(f"VPS: отправляю {action.value}...", vps_mk_before),
         reply_markup=vps_mk_before,
@@ -737,8 +906,19 @@ async def _post_vps_button_action(
     except RegRuClientError:
         log.exception("reglet action failed from button: %s", action)
         text = "Панель недоступна или отклонила запрос. Повторите позже."
-    running_after = await _fetch_reglet_running(regru, settings)
-    vps_mk_after = _vps_menu_markup(is_running=running_after)
+    else:
+        if action == RegletAction.START:
+            _mark_reglet_start_pending_for_user(context, user_id)
+        elif action in {RegletAction.STOP, RegletAction.REBOOT}:
+            _clear_reglet_start_pending_for_user(context, user_id)
+    payload_after = await _fetch_reglets_payload(regru)
+    running_after, is_starting_after = _vps_tab_state_from_payload(
+        payload_after,
+        settings,
+        context,
+        user_id,
+    )
+    vps_mk_after = _vps_menu_markup(is_running=running_after, is_starting=is_starting_after)
     await q.edit_message_text(
         pad_message_for_inline_keyboard(text, vps_mk_after),
         reply_markup=vps_mk_after,

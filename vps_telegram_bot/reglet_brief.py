@@ -124,6 +124,56 @@ def format_reglet_telegram(
     return out.rstrip()
 
 
+def reglet_panel_action_in_progress_from_list_payload(
+    api_payload: Mapping[str, Any],
+    *,
+    reglet_id: int,
+) -> bool:
+    """По ``links.actions`` панели: для этого reglet есть операция со статусом ``in-progress``.
+
+    Reg.ru отдаёт ``in-progress`` при запуске, остановке, перезагрузке и других действиях.
+    Пока операция не завершена, ``status`` reglet может ещё не отражать целевое состояние —
+    UI не должен трактовать это как «VPS точно выключен» или дублировать те же действия.
+
+    Args:
+        api_payload: JSON корня списка reglets (с полем ``links``).
+        reglet_id: Идентификатор reglet из настроек.
+
+    Returns:
+        ``True``, если для данного ``resource_id`` / ``resource_type`` == ``reglet`` найдена
+        любая запись в ``actions`` со статусом ``in-progress``; иначе ``False``.
+    """
+    links = api_payload.get("links")
+    if not isinstance(links, dict):
+        return False
+    acts = links.get("actions")
+    if not isinstance(acts, list):
+        return False
+    for a in acts:
+        if not isinstance(a, dict):
+            continue
+        if a.get("resource_id") != reglet_id:
+            continue
+        if str(a.get("resource_type") or "") != "reglet":
+            continue
+        if str(a.get("status") or "").strip().lower() == "in-progress":
+            return True
+    return False
+
+
+def reglet_start_in_progress_from_list_payload(
+    api_payload: Mapping[str, Any],
+    *,
+    reglet_id: int,
+) -> bool:
+    """Устаревшее имя: то же, что ``reglet_panel_action_in_progress_from_list_payload``."""
+
+    return reglet_panel_action_in_progress_from_list_payload(
+        api_payload,
+        reglet_id=reglet_id,
+    )
+
+
 def reglet_is_running_from_list_payload(
     api_payload: Mapping[str, Any],
     *,
