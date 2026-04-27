@@ -22,6 +22,8 @@ from vps_telegram_bot.telegram_inline_kb import pad_message_for_inline_keyboard
 
 log = logging.getLogger(__name__)
 
+_WORLD_REGEN_CD_TASKS_KEY = "world_regen_cd_tasks"
+
 _BACKUP_CATALOG_KEY = "mcops_backup_catalog"
 _ACCESS_DENIED_RU = "Нет доступа. Этот бот только для списка доверенных."
 _CALLBACK_PICK = re.compile(r"^mcs:([A-Za-z0-9_-]+):(\d+)$")
@@ -127,6 +129,8 @@ _WORLD_REGEN_MID_RU = (
     "Перейти к последнему подтверждению (случайный сид)?"
 )
 
+_WORLD_REGEN_ULTRA_RU = "ТОЧНО ХОТИТЕ ЭТО СДЕЛАТЬ????"
+
 
 def admin_world_regen_step1_markup() -> InlineKeyboardMarkup:
     """Первый шаг: пояснение и переход к промежуточному подтверждению."""
@@ -163,16 +167,36 @@ def admin_world_regen_mid_markup() -> InlineKeyboardMarkup:
 
 
 def admin_world_regen_final_markup() -> InlineKeyboardMarkup:
-    """Последнее подтверждение: «Да» справа."""
+    """Подтверждение перед таймером: «Да» слева, отмена справа."""
 
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
                 InlineKeyboardButton(
                     "Да, новый мир (случайный сид)",
-                    callback_data="adm:world_regen_do",
+                    callback_data="adm:world_regen_almost",
                 ),
+                InlineKeyboardButton("Отмена", callback_data="nav:admin"),
+            ],
+            [InlineKeyboardButton("Домой", callback_data="nav:home")],
+        ]
+    )
+
+
+def admin_world_regen_ultra_markup(*, armed: bool, timer_label: str = "5") -> InlineKeyboardMarkup:
+    """Финальное подтверждение: НЕТ слева; справа по очереди 5…1 (без действия), затем «да?»."""
+
+    if armed:
+        right_text = "да?"
+        right_cb = "adm:world_regen_do"
+    else:
+        right_text = timer_label
+        right_cb = "adm:world_regen_cd"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("НЕТ", callback_data="adm:world_regen_ultra_cancel"),
+                InlineKeyboardButton(right_text, callback_data=right_cb),
             ],
             [InlineKeyboardButton("Домой", callback_data="nav:home")],
         ]
@@ -307,6 +331,88 @@ async def admin_world_regen_show_final_confirm(q: CallbackQuery) -> None:
             final_mk,
         ),
         reply_markup=final_mk,
+    )
+
+
+def _world_regen_cd_task_key(q: CallbackQuery) -> tuple[int, int] | None:
+    """Идентификатор сообщения для фонового таймера перегенерации мира."""
+
+    m = q.message
+    if m is None:
+        return None
+    return (m.chat_id, m.message_id)
+
+
+async def admin_world_regen_show_ultra_confirm(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Экран 4: текст «ТОЧНО…», на правой кнопке 5→1 (колбэк-пустышка), затем «да?» → сброс."""
+
+    key = _world_regen_cd_task_key(q)
+    if key is None:
+        return
+    bot_data = context.application.bot_data
+    tasks_map: dict[tuple[int, int], asyncio.Task] = bot_data.setdefault(
+        _WORLD_REGEN_CD_TASKS_KEY,
+        {},
+    )
+    old = tasks_map.pop(key, None)
+    if old is not None and not old.done():
+        old.cancel()
+
+    ultra_mk = admin_world_regen_ultra_markup(armed=False, timer_label="5")
+    padded = pad_message_for_inline_keyboard(_WORLD_REGEN_ULTRA_RU, ultra_mk)
+    await q.edit_message_text(padded, reply_markup=ultra_mk)
+
+    bot = context.bot
+
+    async def countdown() -> None:
+        try:
+            for label in ("4", "3", "2", "1"):
+                await asyncio.sleep(1.0)
+                mk = admin_world_regen_ultra_markup(armed=False, timer_label=label)
+                await bot.edit_message_reply_markup(
+                    chat_id=key[0],
+                    message_id=key[1],
+                    reply_markup=mk,
+                )
+            mk_ready = admin_world_regen_ultra_markup(armed=True)
+            await bot.edit_message_reply_markup(
+                chat_id=key[0],
+                message_id=key[1],
+                reply_markup=mk_ready,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TelegramError:
+            log.debug("world regen countdown telegram edit failed", exc_info=True)
+        finally:
+            tasks_map.pop(key, None)
+
+    tasks_map[key] = asyncio.create_task(countdown())
+
+
+async def admin_world_regen_ultra_cancel(
+    q: CallbackQuery,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Отмена на экране таймера: остановить отсчёт и вернуть админ-панель."""
+
+    key = _world_regen_cd_task_key(q)
+    if key is not None:
+        bot_data = context.application.bot_data
+        tasks_map: dict[tuple[int, int], asyncio.Task] = bot_data.setdefault(
+            _WORLD_REGEN_CD_TASKS_KEY,
+            {},
+        )
+        t = tasks_map.pop(key, None)
+        if t is not None and not t.done():
+            t.cancel()
+    adm_mk = admin_menu_markup()
+    await q.edit_message_text(
+        pad_message_for_inline_keyboard("Админская чепуха", adm_mk),
+        reply_markup=adm_mk,
     )
 
 

@@ -20,6 +20,8 @@ from vps_telegram_bot.minecraft_handlers import (
     admin_world_regen_show_final_confirm,
     admin_world_regen_show_intro,
     admin_world_regen_show_mid_confirm,
+    admin_world_regen_show_ultra_confirm,
+    admin_world_regen_ultra_cancel,
     minecraft_menu_markup,
     register_minecraft_handlers,
 )
@@ -749,6 +751,22 @@ async def _handle_admin_button(
             )
             return
         await admin_world_regen_show_final_confirm(q)
+        return
+    if data == "adm:world_regen_almost":
+        if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard(ssh_msg, markup),
+                reply_markup=markup,
+            )
+            return
+        await admin_world_regen_show_ultra_confirm(q, context)
+        return
+    if data == "adm:world_regen_ultra_cancel":
+        await admin_world_regen_ultra_cancel(q, context)
+        return
+    if data == "adm:world_regen_cd":
+        # Таймер: только ack в роутере, без действий.
         return
     if data == "adm:world_regen_do":
         if remote is None:
