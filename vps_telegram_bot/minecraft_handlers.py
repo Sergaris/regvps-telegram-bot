@@ -104,18 +104,15 @@ def admin_menu_markup(
 
     if idle_auto_poweroff_enabled is True:
         idle_row = [
-            InlineKeyboardButton("Автовыкл: вкл", callback_data="adm:idle_status"),
-            InlineKeyboardButton("Выключить", callback_data="adm:idle_disable"),
+            InlineKeyboardButton("Автовыкл VPS:включено", callback_data="adm:idle_disable"),
         ]
     elif idle_auto_poweroff_enabled is False:
         idle_row = [
-            InlineKeyboardButton("Автовыкл: выкл", callback_data="adm:idle_status"),
-            InlineKeyboardButton("Включить", callback_data="adm:idle_enable"),
+            InlineKeyboardButton("Автовыкл VPS:выключено", callback_data="adm:idle_enable"),
         ]
     else:
         idle_row = [
-            InlineKeyboardButton("Автовыкл: ?", callback_data="adm:idle_status"),
-            InlineKeyboardButton("Статус", callback_data="adm:idle_status"),
+            InlineKeyboardButton("Автовыкл VPS:?", callback_data="adm:idle_status"),
         ]
 
     return InlineKeyboardMarkup(
