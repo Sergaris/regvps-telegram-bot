@@ -90,12 +90,29 @@ def test_admin_menu_markup_mods_row_third_after_balance() -> None:
     rows = [[str(b.callback_data) for b in row] for row in markup.inline_keyboard]
     assert rows[0] == ["adm:vps_status", "adm:mc_status"]
     assert rows[1] == ["adm:vps_balance"]
-    assert rows[2] == ["adm:idle_status", "adm:idle_disable"]
-    assert rows[3] == ["adm:idle_enable"]
-    assert rows[4] == ["adm:mods_plan", "adm:confirm_mods_apply"]
-    assert rows[5] == ["adm:backup_delete_menu"]
-    assert rows[6] == ["adm:world_regen_menu"]
-    assert rows[7] == ["nav:home"]
+    assert rows[2] == ["adm:idle_status", "adm:idle_status"]
+    assert rows[3] == ["adm:mods_plan", "adm:confirm_mods_apply"]
+    assert rows[4] == ["adm:backup_delete_menu"]
+    assert rows[5] == ["adm:world_regen_menu"]
+    assert rows[6] == ["nav:home"]
+
+
+def test_admin_menu_markup_idle_enabled_shows_only_disable() -> None:
+    markup = admin_menu_markup(idle_auto_poweroff_enabled=True)
+    row = markup.inline_keyboard[2]
+    assert row[0].text == "Автовыкл: вкл"
+    assert row[0].callback_data == "adm:idle_status"
+    assert row[1].text == "Выключить"
+    assert row[1].callback_data == "adm:idle_disable"
+
+
+def test_admin_menu_markup_idle_disabled_shows_only_enable() -> None:
+    markup = admin_menu_markup(idle_auto_poweroff_enabled=False)
+    row = markup.inline_keyboard[2]
+    assert row[0].text == "Автовыкл: выкл"
+    assert row[0].callback_data == "adm:idle_status"
+    assert row[1].text == "Включить"
+    assert row[1].callback_data == "adm:idle_enable"
 
 
 def test_world_reset_argv_random_vs_fixed() -> None:

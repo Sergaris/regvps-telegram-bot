@@ -96,8 +96,27 @@ def minecraft_menu_markup() -> InlineKeyboardMarkup:
     )
 
 
-def admin_menu_markup() -> InlineKeyboardMarkup:
+def admin_menu_markup(
+    *,
+    idle_auto_poweroff_enabled: bool | None = None,
+) -> InlineKeyboardMarkup:
     """Панель «Админская чепуха»: статусы, баланс, моды Modrinth, назад."""
+
+    if idle_auto_poweroff_enabled is True:
+        idle_row = [
+            InlineKeyboardButton("Автовыкл: вкл", callback_data="adm:idle_status"),
+            InlineKeyboardButton("Выключить", callback_data="adm:idle_disable"),
+        ]
+    elif idle_auto_poweroff_enabled is False:
+        idle_row = [
+            InlineKeyboardButton("Автовыкл: выкл", callback_data="adm:idle_status"),
+            InlineKeyboardButton("Включить", callback_data="adm:idle_enable"),
+        ]
+    else:
+        idle_row = [
+            InlineKeyboardButton("Автовыкл: ?", callback_data="adm:idle_status"),
+            InlineKeyboardButton("Статус", callback_data="adm:idle_status"),
+        ]
 
     return InlineKeyboardMarkup(
         [
@@ -106,11 +125,7 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Статус Майна", callback_data="adm:mc_status"),
             ],
             [InlineKeyboardButton("Баланс VPS", callback_data="adm:vps_balance")],
-            [
-                InlineKeyboardButton("Автовыкл: статус", callback_data="adm:idle_status"),
-                InlineKeyboardButton("Автовыкл выкл", callback_data="adm:idle_disable"),
-            ],
-            [InlineKeyboardButton("Автовыкл вкл", callback_data="adm:idle_enable")],
+            idle_row,
             [
                 InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
                 InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),

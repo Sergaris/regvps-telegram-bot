@@ -443,7 +443,7 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await _open_vps_tab(q, regru, app_settings, context, uid)
             return
         if data == "nav:admin":
-            adm_mk = admin_menu_markup()
+            adm_mk = await _admin_menu_markup_with_status(settings.mcops_remote)
             await q.edit_message_text(
                 pad_message_for_inline_keyboard("Админская чепуха", adm_mk),
                 reply_markup=adm_mk,
@@ -579,6 +579,37 @@ async def _open_vps_tab(
     )
 
 
+def _idle_autostop_enabled_from_mcops_json(out: str) -> bool | None:
+    try:
+        root = json.loads(out)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(root, dict):
+        return None
+    value = root.get("idle_auto_poweroff_enabled")
+    return value if isinstance(value, bool) else None
+
+
+async def _fetch_idle_autostop_enabled(remote: McopsRemoteSettings | None) -> bool | None:
+    if remote is None:
+        return None
+    code, out, _err = await run_remote_mcops(
+        remote,
+        ["watchdog", "idle-autostop", "status", "--local", "--json"],
+    )
+    if code != 0:
+        return None
+    return _idle_autostop_enabled_from_mcops_json(out)
+
+
+async def _admin_menu_markup_with_status(
+    remote: McopsRemoteSettings | None,
+) -> InlineKeyboardMarkup:
+    return admin_menu_markup(
+        idle_auto_poweroff_enabled=await _fetch_idle_autostop_enabled(remote),
+    )
+
+
 def _vps_panel_in_progress_banner(
     payload: Mapping[str, Any] | None,
     settings: AppSettings,
@@ -633,7 +664,7 @@ async def _handle_admin_button(
 
     regru = _reg_client(context)
     remote: McopsRemoteSettings | None = settings.mcops_remote
-    markup = admin_menu_markup()
+    markup = await _admin_menu_markup_with_status(remote)
 
     if data == "adm:vps_status":
         await q.edit_message_text(
@@ -706,14 +737,9 @@ async def _handle_admin_button(
             ["watchdog", "idle-autostop", action, "--local", "--json"],
         )
         blob = (out + "\n" + err).strip()
+        enabled: bool | None = None
         if code == 0:
-            enabled: bool | None = None
-            try:
-                root = json.loads(out)
-            except json.JSONDecodeError:
-                root = {}
-            if isinstance(root, dict) and isinstance(root.get("idle_auto_poweroff_enabled"), bool):
-                enabled = bool(root["idle_auto_poweroff_enabled"])
+            enabled = _idle_autostop_enabled_from_mcops_json(out)
             if enabled is None:
                 text = "Автовыключение: статус обновлён.\n" + tail_command_text(blob, max_len=3000)
             else:
@@ -722,6 +748,7 @@ async def _handle_admin_button(
         else:
             tail = tail_command_text(blob, max_len=3000)
             text = f"Не удалось изменить автовыключение. Код {code}\n{tail}"
+        markup = admin_menu_markup(idle_auto_poweroff_enabled=enabled)
         await q.edit_message_text(
             pad_message_for_inline_keyboard(text, markup),
             reply_markup=markup,
