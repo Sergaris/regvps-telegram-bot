@@ -84,16 +84,18 @@ def test_admin_world_regen_ultra_markup_two_buttons_timer_then_yes() -> None:
 
 
 def test_admin_menu_markup_mods_row_third_after_balance() -> None:
-    """Админ-панель: ряд 3 — две кнопки модов под полной строкой баланса."""
+    """Админ-панель: idle autostop lives under balance before mods."""
 
     markup = admin_menu_markup()
     rows = [[str(b.callback_data) for b in row] for row in markup.inline_keyboard]
     assert rows[0] == ["adm:vps_status", "adm:mc_status"]
     assert rows[1] == ["adm:vps_balance"]
-    assert rows[2] == ["adm:mods_plan", "adm:confirm_mods_apply"]
-    assert rows[3] == ["adm:backup_delete_menu"]
-    assert rows[4] == ["adm:world_regen_menu"]
-    assert rows[5] == ["nav:home"]
+    assert rows[2] == ["adm:idle_status", "adm:idle_disable"]
+    assert rows[3] == ["adm:idle_enable"]
+    assert rows[4] == ["adm:mods_plan", "adm:confirm_mods_apply"]
+    assert rows[5] == ["adm:backup_delete_menu"]
+    assert rows[6] == ["adm:world_regen_menu"]
+    assert rows[7] == ["nav:home"]
 
 
 def test_world_reset_argv_random_vs_fixed() -> None:

@@ -107,6 +107,11 @@ def admin_menu_markup() -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton("Баланс VPS", callback_data="adm:vps_balance")],
             [
+                InlineKeyboardButton("Автовыкл: статус", callback_data="adm:idle_status"),
+                InlineKeyboardButton("Автовыкл выкл", callback_data="adm:idle_disable"),
+            ],
+            [InlineKeyboardButton("Автовыкл вкл", callback_data="adm:idle_enable")],
+            [
                 InlineKeyboardButton("Проверить моды", callback_data="adm:mods_plan"),
                 InlineKeyboardButton("Обновить моды", callback_data="adm:confirm_mods_apply"),
             ],
@@ -125,8 +130,7 @@ _WORLD_REGEN_INTRO_RU = (
 )
 
 _WORLD_REGEN_MID_RU = (
-    "Текущий мир будет удалён без tar-бэкапа.\n"
-    "Перейти к последнему подтверждению (случайный сид)?"
+    "Текущий мир будет удалён без tar-бэкапа.\nПерейти к последнему подтверждению (случайный сид)?"
 )
 
 _WORLD_REGEN_ULTRA_RU = "ТОЧНО ХОТИТЕ ЭТО СДЕЛАТЬ????"

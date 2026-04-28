@@ -1,5 +1,6 @@
 """Регистрация команд Telegram и проверка allowlist."""
 
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -24,6 +25,7 @@ from vps_telegram_bot.minecraft_handlers import (
     admin_world_regen_ultra_cancel,
     minecraft_menu_markup,
     register_minecraft_handlers,
+    tail_command_text,
 )
 from vps_telegram_bot.reglet_brief import (
     format_reglet_telegram,
@@ -677,6 +679,49 @@ async def _handle_admin_button(
             if code == 0
             else f"mcops status failed ({code}):\n{err[:1500] or out[:1500]}"
         )
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, markup),
+            reply_markup=markup,
+        )
+        return
+    if data in {"adm:idle_status", "adm:idle_enable", "adm:idle_disable"}:
+        if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard(ssh_msg, markup),
+                reply_markup=markup,
+            )
+            return
+        action = {
+            "adm:idle_status": "status",
+            "adm:idle_enable": "enable",
+            "adm:idle_disable": "disable",
+        }[data]
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard("Обновляю настройку автовыключения...", markup),
+            reply_markup=markup,
+        )
+        code, out, err = await run_remote_mcops(
+            remote,
+            ["watchdog", "idle-autostop", action, "--local", "--json"],
+        )
+        blob = (out + "\n" + err).strip()
+        if code == 0:
+            enabled: bool | None = None
+            try:
+                root = json.loads(out)
+            except json.JSONDecodeError:
+                root = {}
+            if isinstance(root, dict) and isinstance(root.get("idle_auto_poweroff_enabled"), bool):
+                enabled = bool(root["idle_auto_poweroff_enabled"])
+            if enabled is None:
+                text = "Автовыключение: статус обновлён.\n" + tail_command_text(blob, max_len=3000)
+            else:
+                state = "включено" if enabled else "выключено"
+                text = f"Автовыключение VPS, когда перед биллингом нет игроков: {state}."
+        else:
+            tail = tail_command_text(blob, max_len=3000)
+            text = f"Не удалось изменить автовыключение. Код {code}\n{tail}"
         await q.edit_message_text(
             pad_message_for_inline_keyboard(text, markup),
             reply_markup=markup,
