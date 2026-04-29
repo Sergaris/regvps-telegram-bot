@@ -443,7 +443,7 @@ def _menu_callback_router(settings: AppSettings) -> Handler:
             await _open_vps_tab(q, regru, app_settings, context, uid)
             return
         if data == "nav:admin":
-            adm_mk = await _admin_menu_markup_with_status(settings.mcops_remote)
+            adm_mk = admin_menu_markup()
             await q.edit_message_text(
                 pad_message_for_inline_keyboard("Админская чепуха", adm_mk),
                 reply_markup=adm_mk,
@@ -590,26 +590,6 @@ def _idle_autostop_enabled_from_mcops_json(out: str) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
-async def _fetch_idle_autostop_enabled(remote: McopsRemoteSettings | None) -> bool | None:
-    if remote is None:
-        return None
-    code, out, _err = await run_remote_mcops(
-        remote,
-        ["watchdog", "idle-autostop", "status", "--local", "--json"],
-    )
-    if code != 0:
-        return None
-    return _idle_autostop_enabled_from_mcops_json(out)
-
-
-async def _admin_menu_markup_with_status(
-    remote: McopsRemoteSettings | None,
-) -> InlineKeyboardMarkup:
-    return admin_menu_markup(
-        idle_auto_poweroff_enabled=await _fetch_idle_autostop_enabled(remote),
-    )
-
-
 def _vps_panel_in_progress_banner(
     payload: Mapping[str, Any] | None,
     settings: AppSettings,
@@ -664,7 +644,7 @@ async def _handle_admin_button(
 
     regru = _reg_client(context)
     remote: McopsRemoteSettings | None = settings.mcops_remote
-    markup = await _admin_menu_markup_with_status(remote)
+    markup = admin_menu_markup()
 
     if data == "adm:vps_status":
         await q.edit_message_text(
@@ -715,7 +695,7 @@ async def _handle_admin_button(
             reply_markup=markup,
         )
         return
-    if data in {"adm:idle_status", "adm:idle_enable", "adm:idle_disable"}:
+    if data == "adm:idle_status":
         if remote is None:
             ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
             await q.edit_message_text(
@@ -723,11 +703,44 @@ async def _handle_admin_button(
                 reply_markup=markup,
             )
             return
-        action = {
-            "adm:idle_status": "status",
-            "adm:idle_enable": "enable",
-            "adm:idle_disable": "disable",
-        }[data]
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(
+                "Запрашиваю статус автовыкл VPS...",
+                markup,
+            ),
+            reply_markup=markup,
+        )
+        code, out, err = await run_remote_mcops(
+            remote,
+            ["watchdog", "idle-autostop", "status", "--local", "--json"],
+        )
+        blob = (out + "\n" + err).strip()
+        enabled: bool | None = None
+        if code == 0:
+            enabled = _idle_autostop_enabled_from_mcops_json(out)
+            if enabled is None:
+                text = "Автовыключение: статус получен.\n" + tail_command_text(blob, max_len=3000)
+            else:
+                state = "включено" if enabled else "выключено"
+                text = f"Автовыключение VPS, когда перед биллингом нет игроков: {state}."
+        else:
+            tail = tail_command_text(blob, max_len=3000)
+            text = f"Не удалось получить статус автовыключения. Код {code}\n{tail}"
+        markup = admin_menu_markup(idle_auto_poweroff_enabled=enabled)
+        await q.edit_message_text(
+            pad_message_for_inline_keyboard(text, markup),
+            reply_markup=markup,
+        )
+        return
+    if data in {"adm:idle_enable", "adm:idle_disable"}:
+        if remote is None:
+            ssh_msg = "SSH к хосту Minecraft не настроен (см. MCOPS_SSH_* в env)."
+            await q.edit_message_text(
+                pad_message_for_inline_keyboard(ssh_msg, markup),
+                reply_markup=markup,
+            )
+            return
+        action = {"adm:idle_enable": "enable", "adm:idle_disable": "disable"}[data]
         await q.edit_message_text(
             pad_message_for_inline_keyboard("Обновляю настройку автовыключения...", markup),
             reply_markup=markup,
@@ -737,18 +750,21 @@ async def _handle_admin_button(
             ["watchdog", "idle-autostop", action, "--local", "--json"],
         )
         blob = (out + "\n" + err).strip()
-        enabled: bool | None = None
+        enabled_toggle: bool | None = None
         if code == 0:
-            enabled = _idle_autostop_enabled_from_mcops_json(out)
-            if enabled is None:
-                text = "Автовыключение: статус обновлён.\n" + tail_command_text(blob, max_len=3000)
+            enabled_toggle = _idle_autostop_enabled_from_mcops_json(out)
+            if enabled_toggle is None:
+                text = "Автовыключение: настройка обновлена.\n" + tail_command_text(
+                    blob,
+                    max_len=3000,
+                )
             else:
-                state = "включено" if enabled else "выключено"
+                state = "включено" if enabled_toggle else "выключено"
                 text = f"Автовыключение VPS, когда перед биллингом нет игроков: {state}."
         else:
             tail = tail_command_text(blob, max_len=3000)
             text = f"Не удалось изменить автовыключение. Код {code}\n{tail}"
-        markup = admin_menu_markup(idle_auto_poweroff_enabled=enabled)
+        markup = admin_menu_markup(idle_auto_poweroff_enabled=enabled_toggle)
         await q.edit_message_text(
             pad_message_for_inline_keyboard(text, markup),
             reply_markup=markup,

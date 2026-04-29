@@ -91,6 +91,8 @@ def test_admin_menu_markup_mods_row_third_after_balance() -> None:
     assert rows[0] == ["adm:vps_status", "adm:mc_status"]
     assert rows[1] == ["adm:vps_balance"]
     assert rows[2] == ["adm:idle_status"]
+    idle_btn = markup.inline_keyboard[2][0]
+    assert idle_btn.text == "Статус автовыкл VPS"
     assert rows[3] == ["adm:mods_plan", "adm:confirm_mods_apply"]
     assert rows[4] == ["adm:backup_delete_menu"]
     assert rows[5] == ["adm:world_regen_menu"]
