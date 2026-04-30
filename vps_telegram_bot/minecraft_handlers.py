@@ -112,7 +112,10 @@ def admin_menu_markup(
         ]
     else:
         idle_row = [
-            InlineKeyboardButton("Автовыкл VPS:?", callback_data="adm:idle_status"),
+            InlineKeyboardButton(
+                "Статус автовыкл VPS",
+                callback_data="adm:idle_status",
+            ),
         ]
 
     return InlineKeyboardMarkup(
