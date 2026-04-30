@@ -68,6 +68,20 @@ async def _reply_message_with_inline_kb(
     )
 
 
+async def _safe_reply_message_with_inline_kb(
+    msg: Message,
+    text: str,
+    markup: InlineKeyboardMarkup,
+) -> Message | None:
+    """Reply with an inline keyboard without failing the long-running operation."""
+
+    try:
+        return await _reply_message_with_inline_kb(msg, text, markup)
+    except TelegramError:
+        log.warning("Could not send Telegram fallback message", exc_info=True)
+        return None
+
+
 def _tail_text(text: str, *, max_len: int) -> str:
     """Return the end of long command output, where failures usually are."""
 
@@ -323,7 +337,7 @@ async def _run_admin_mods_command_with_progress(
     adm_mk = admin_menu_markup()
     edited = await _safe_edit_callback_message(q, text, reply_markup=adm_mk)
     if not edited and q.message is not None:
-        await _reply_message_with_inline_kb(q.message, text, adm_mk)
+        await _safe_reply_message_with_inline_kb(q.message, text, adm_mk)
 
 
 def _mcops_level_seed_unsupported_hint(blob: str) -> str:
@@ -1165,7 +1179,7 @@ async def _run_restore_with_progress(
     )
     if not edited and q.message is not None:
         nav_bk = _backup_nav_markup()
-        await _reply_message_with_inline_kb(
+        await _safe_reply_message_with_inline_kb(
             q.message,
             f"Restore завершён. Код {code}\n{tail}",
             nav_bk,
@@ -1205,7 +1219,7 @@ async def _run_manual_backup_with_progress(
         reply_markup=markup,
     )
     if not edited and q.message is not None:
-        await _reply_message_with_inline_kb(
+        await _safe_reply_message_with_inline_kb(
             q.message,
             f"Ручной бэкап завершён. Код {code}\n{tail}",
             markup,

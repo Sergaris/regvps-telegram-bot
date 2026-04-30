@@ -1,8 +1,14 @@
 """Tests for Minecraft Telegram helper formatting."""
 
+import pytest
+from telegram.error import TimedOut
+
+import vps_telegram_bot.minecraft_handlers as minecraft_handlers
+from vps_telegram_bot.config import McopsRemoteSettings
 from vps_telegram_bot.minecraft_handlers import (
     _manual_slot_labels,
     _mcops_level_seed_unsupported_hint,
+    _run_admin_mods_command_with_progress,
     _world_reset_argv_for_telegram,
     admin_menu_markup,
     admin_world_regen_ultra_markup,
@@ -146,3 +152,44 @@ def test_mcops_level_seed_unsupported_hint_detects_argparse() -> None:
     err = "cli.py: error: unrecognized arguments: --level-seed 123"
     assert "mcops" in _mcops_level_seed_unsupported_hint(err).lower()
     assert _mcops_level_seed_unsupported_hint("ok") == ""
+
+
+@pytest.mark.asyncio
+async def test_mods_progress_swallows_final_telegram_fallback_timeout(monkeypatch) -> None:
+    async def fake_run_remote_mcops(
+        _remote: McopsRemoteSettings,
+        _argv: list[str],
+    ) -> tuple[int, str, str]:
+        return 0, "done", ""
+
+    class FailingMessage:
+        async def reply_text(self, *_args, **_kwargs) -> None:
+            raise TimedOut("reply timed out")
+
+    class FailingCallback:
+        message = FailingMessage()
+
+        async def edit_message_text(self, *_args, **_kwargs) -> None:
+            raise TimedOut("edit timed out")
+
+    monkeypatch.setattr(minecraft_handlers, "run_remote_mcops", fake_run_remote_mcops)
+    remote = McopsRemoteSettings(
+        host="host",
+        user="user",
+        identity_file=None,
+        ssh_password="secret",
+        port=22,
+        remote_cwd="/srv/mcops",
+        remote_python="python3",
+        timeout_sec=30.0,
+        command_timeout_sec=3600.0,
+    )
+
+    await _run_admin_mods_command_with_progress(
+        FailingCallback(),
+        remote,
+        ["mods", "apply", "--local"],
+        start_text="start",
+        progress_text="progress",
+        failure_prefix="mods apply",
+    )
