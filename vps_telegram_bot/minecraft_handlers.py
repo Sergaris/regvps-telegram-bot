@@ -100,7 +100,7 @@ def admin_menu_markup(
     *,
     idle_auto_poweroff_enabled: bool | None = None,
 ) -> InlineKeyboardMarkup:
-    """Панель «Админская чепуха»: статусы, баланс, моды Modrinth, назад."""
+    """Панель «Админская чепуха»: статусы, баланс, моды, назад."""
 
     if idle_auto_poweroff_enabled is True:
         idle_row = [
@@ -241,18 +241,13 @@ async def admin_panel_run_mods_plan(
 ) -> None:
     """Выполнить ``mods plan --local`` и вернуть клавиатуру админ-панели."""
 
-    await q.edit_message_text("Проверяю обновления модов (mcops mods plan --local)...")
-    code, out, err = await run_remote_mcops(remote, ["mods", "plan", "--local"])
-    blob = (out + "\n" + err).strip()
-    text = (
-        _tail_text(blob, max_len=3500)
-        if code == 0
-        else f"mods plan: код {code}\n{_tail_text(blob, max_len=3200)}"
-    )
-    adm_mk = admin_menu_markup()
-    await q.edit_message_text(
-        pad_message_for_inline_keyboard(text, adm_mk),
-        reply_markup=adm_mk,
+    await _run_admin_mods_command_with_progress(
+        q,
+        remote,
+        ["mods", "plan", "--local"],
+        start_text="Проверяю обновления модов (Modrinth + CurseForge)...",
+        progress_text="Проверка обновлений модов продолжается.",
+        failure_prefix="mods plan",
     )
 
 
@@ -262,10 +257,10 @@ async def admin_panel_show_mods_apply_confirm(q: CallbackQuery) -> None:
     mods_mk = admin_mods_apply_confirm_markup()
     await q.edit_message_text(
         pad_message_for_inline_keyboard(
-            "Применить обновления Modrinth на сервере?\n"
-            "Будут скачаны и заменены соответствующие JAR в каталоге mods "
-            "(mcops mods apply --local). Перезапуск сервера не выполняется — при необходимости "
-            "сделайте это отдельно.",
+            "Применить обновления модов на сервере?\n"
+            "Будут выбраны подходящие версии из Modrinth и CurseForge, скачаны и заменены "
+            "соответствующие JAR в каталоге mods (mcops mods apply --local). "
+            "Minecraft будет остановлен и запущен заново.",
             mods_mk,
         ),
         reply_markup=mods_mk,
@@ -278,21 +273,54 @@ async def admin_panel_run_mods_apply(
 ) -> None:
     """Выполнить ``mods apply --local`` и вернуть клавиатуру админ-панели."""
 
-    await q.edit_message_text(
-        "Применяю обновления модов (mcops mods apply --local).\nЭто может занять несколько минут..."
+    await _run_admin_mods_command_with_progress(
+        q,
+        remote,
+        ["mods", "apply", "--local"],
+        start_text=(
+            "Применяю обновления модов (Modrinth + CurseForge).\n"
+            "Это может занять несколько минут..."
+        ),
+        progress_text=(
+            "Обновление модов всё ещё выполняется.\n"
+            "Minecraft может останавливаться, скачивать JAR и запускаться заново."
+        ),
+        failure_prefix="mods apply",
     )
-    code, out, err = await run_remote_mcops(remote, ["mods", "apply", "--local"])
+
+
+async def _run_admin_mods_command_with_progress(
+    q: CallbackQuery,
+    remote: McopsRemoteSettings,
+    argv: list[str],
+    *,
+    start_text: str,
+    progress_text: str,
+    failure_prefix: str,
+) -> None:
+    """Run a long ``mcops mods`` command and keep the Telegram message alive."""
+
+    await _safe_edit_callback_message(q, start_text)
+    task = asyncio.create_task(run_remote_mcops(remote, argv))
+    elapsed = 0
+    while not task.done():
+        await asyncio.sleep(10.0)
+        elapsed += 10
+        await _safe_edit_callback_message(
+            q,
+            f"{progress_text}\nПрошло: {elapsed} сек.",
+        )
+    code, out, err = await task
     blob = (out + "\n" + err).strip()
     text = (
         _tail_text(blob, max_len=3500)
         if code == 0
-        else f"mods apply: код {code}\n{_tail_text(blob, max_len=3200)}"
+        else f"{failure_prefix}: код {code}\n{_tail_text(blob, max_len=3200)}"
     )
     adm_mk = admin_menu_markup()
-    await q.edit_message_text(
-        pad_message_for_inline_keyboard(text, adm_mk),
-        reply_markup=adm_mk,
-    )
+    edited = await _safe_edit_callback_message(q, text, reply_markup=adm_mk)
+    if not edited and q.message is not None:
+        await _reply_message_with_inline_kb(q.message, text, adm_mk)
 
 
 def _mcops_level_seed_unsupported_hint(blob: str) -> str:

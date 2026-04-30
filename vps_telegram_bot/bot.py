@@ -660,7 +660,7 @@ async def _handle_admin_button(
     settings: AppSettings,
     data: str,
 ) -> None:
-    """Панель «Админская чепуха»: статусы, баланс, Modrinth."""
+    """Панель «Админская чепуха»: статусы, баланс, моды."""
 
     regru = _reg_client(context)
     remote: McopsRemoteSettings | None = settings.mcops_remote
@@ -1121,7 +1121,7 @@ def _start_brief_ru() -> str:
         "• VPS — запуск виртуалки в Reg.ru.\n"
         "• Minecraft — управление бэкапами.\n"
         "• Админская чепуха — статусы VPS и Minecraft, баланс, "
-        "проверка и обновление модов Modrinth, выборочное удаление бэкапов, "
+        "проверка и обновление модов, выборочное удаление бэкапов, "
         "перегенерация мира.\n"
         "\n"
         "Не запускайте бота на той же машине, которой он управляет — иначе после stop "
