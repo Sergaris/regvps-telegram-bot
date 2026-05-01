@@ -8,6 +8,7 @@ import secrets
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
@@ -37,6 +38,7 @@ _CALLBACK_AB_PICK = re.compile(r"^abp:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_AB_YES = re.compile(r"^aby:([A-Za-z0-9_-]+):(\d+)$")
 _CALLBACK_AB_NO = re.compile(r"^abx:([A-Za-z0-9_-]+):(\d+)$")
 _MANUAL_BACKUP_RE = re.compile(r"^tar:worlds-manual-(manual-[123])-.+\.(?:tar\.gz|tgz)$")
+_BACKUP_DISPLAY_TZ = ZoneInfo("Europe/Moscow")
 
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
@@ -601,9 +603,7 @@ def _manual_slot_labels(rows: list[dict[str, Any]]) -> dict[str, str]:
         slot_value = str(row.get("slot") or "")
         if slot_value in labels:
             if bool(row.get("occupied")):
-                labels[slot_value] = (
-                    f"{slot_value}: занят ({_format_backup_mtime(_row_mtime(row))})"
-                )
+                labels[slot_value] = f"{slot_value}: {_format_backup_mtime(_row_mtime(row))}"
             continue
         entry_id = str(row.get("id") or "")
         match = _MANUAL_BACKUP_RE.match(entry_id)
@@ -614,7 +614,7 @@ def _manual_slot_labels(rows: list[dict[str, Any]]) -> dict[str, str]:
         if previous is None or _row_mtime(row) > _row_mtime(previous):
             latest[slot] = row
     for slot, row in latest.items():
-        labels[slot] = f"{slot}: занят ({_format_backup_mtime(_row_mtime(row))})"
+        labels[slot] = f"{slot}: {_format_backup_mtime(_row_mtime(row))}"
     return labels
 
 
@@ -631,7 +631,20 @@ def _row_mtime(row: dict[str, Any]) -> float:
 def _format_backup_mtime(mtime: float) -> str:
     if mtime <= 0:
         return "дата неизвестна"
-    return datetime.fromtimestamp(mtime).strftime("%d.%m %H:%M")
+    return datetime.fromtimestamp(mtime, _BACKUP_DISPLAY_TZ).strftime("%d.%m.%Y %H:%M")
+
+
+def _backup_button_label(row: dict[str, Any]) -> str:
+    """Build a short restore/delete button label from the backup catalog row."""
+
+    entry_id = str(row.get("id") or "")
+    timestamp = _format_backup_mtime(_row_mtime(row))
+    match = _MANUAL_BACKUP_RE.match(entry_id)
+    if match is not None:
+        return f"{match.group(1)}: {timestamp}"
+    if entry_id.startswith(("tar:", "mod:")):
+        return f"auto: {timestamp}"
+    return str(row.get("label") or entry_id or timestamp)
 
 
 async def _manual_backup_markup_from_remote(remote: McopsRemoteSettings) -> InlineKeyboardMarkup:
@@ -982,7 +995,7 @@ def _mc_backups_handler(settings: AppSettings) -> Handler:
         token = secrets.token_urlsafe(6)
         for idx, row in enumerate(rows[:20]):
             eid = str(row.get("id") or "")
-            label = str(row.get("label") or eid)[:40]
+            label = _backup_button_label(row)
             if not eid:
                 continue
             catalog.append((eid, label))
@@ -1069,7 +1082,7 @@ async def _show_backup_catalog(
     token = secrets.token_urlsafe(6)
     for idx, row in enumerate(rows[:20]):
         eid = str(row.get("id") or "")
-        label = str(row.get("label") or eid)[:40]
+        label = _backup_button_label(row)
         if not eid:
             continue
         catalog.append((eid, label))
@@ -1110,7 +1123,7 @@ async def admin_backup_delete_show_catalog(
     token = secrets.token_urlsafe(6)
     for idx, row in enumerate(rows[:20]):
         eid = str(row.get("id") or "")
-        label = str(row.get("label") or eid)[:40]
+        label = _backup_button_label(row)
         if not eid:
             continue
         catalog.append((eid, label))

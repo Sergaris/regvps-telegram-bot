@@ -6,6 +6,7 @@ from telegram.error import TimedOut
 import vps_telegram_bot.minecraft_handlers as minecraft_handlers
 from vps_telegram_bot.config import McopsRemoteSettings
 from vps_telegram_bot.minecraft_handlers import (
+    _backup_button_label,
     _manual_slot_labels,
     _mcops_level_seed_unsupported_hint,
     _run_admin_mods_command_with_progress,
@@ -34,9 +35,9 @@ def test_manual_slot_labels_show_occupied_and_empty_slots() -> None:
 
     labels = _manual_slot_labels(rows)
 
-    assert labels["manual-1"].startswith("manual-1: занят")
+    assert labels["manual-1"] == "manual-1: 25.04.2026 03:40"
     assert labels["manual-2"] == "manual-2: пусто"
-    assert labels["manual-3"].startswith("manual-3: занят")
+    assert labels["manual-3"] == "manual-3: 25.04.2026 04:40"
 
 
 def test_manual_slot_labels_prefer_manual_slot_status_rows() -> None:
@@ -49,8 +50,29 @@ def test_manual_slot_labels_prefer_manual_slot_status_rows() -> None:
     labels = _manual_slot_labels(rows)
 
     assert labels["manual-1"] == "manual-1: пусто"
-    assert labels["manual-2"].startswith("manual-2: занят")
+    assert labels["manual-2"] == "manual-2: 25.04.2026 03:40"
     assert labels["manual-3"] == "manual-3: пусто"
+
+
+def test_backup_button_label_uses_type_and_moscow_time() -> None:
+    assert (
+        _backup_button_label(
+            {
+                "id": "tar:worlds-manual-manual-1-20260425010000.tar.gz",
+                "mtime": 1_777_077_600.0,
+            }
+        )
+        == "manual-1: 25.04.2026 03:40"
+    )
+    assert (
+        _backup_button_label(
+            {
+                "id": "tar:worlds-backup-20260425010000.tar.gz",
+                "mtime": 1_777_077_600.0,
+            }
+        )
+        == "auto: 25.04.2026 03:40"
+    )
 
 
 def test_minecraft_menu_markup_matches_compact_layout() -> None:

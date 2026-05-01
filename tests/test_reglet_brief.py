@@ -62,6 +62,8 @@ def test_format_reglet_telegram_includes_essentials() -> None:
     assert "16" in t and "ГБ" in t
     assert "7027955" in t
     assert "панель:" in t
+    assert "Биллинг по API" in t
+    assert "задержкой" in t
 
 
 def test_format_reglet_missing() -> None:

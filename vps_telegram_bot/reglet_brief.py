@@ -97,7 +97,7 @@ def format_reglet_telegram(
     flags = _format_service_flags(d)
 
     billed = d.get("billed_until")
-    bl = f"Биллинг: {billed}\n" if billed is not None and str(billed) != "" else ""
+    bl = _format_billing_line(billed)
 
     op_line = _format_latest_action(primary)
 
@@ -341,6 +341,14 @@ def _format_latest_action(
     if c is not None:
         return f"Панель: {rus} — {s} · {raw_t} · {c}."
     return f"Панель: {rus} — {s} · {raw_t}."
+
+
+def _format_billing_line(value: object) -> str:
+    """Format Reg.ru billing timestamp without treating it as a real-time deadline."""
+
+    if value is None or str(value) == "":
+        return ""
+    return f"Биллинг по API: {value} (может обновляться с задержкой)."
 
 
 def _as_ram(n: object) -> str:
