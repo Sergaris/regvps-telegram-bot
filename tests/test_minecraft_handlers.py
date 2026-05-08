@@ -7,14 +7,18 @@ import vps_telegram_bot.minecraft_handlers as minecraft_handlers
 from vps_telegram_bot.config import McopsRemoteSettings
 from vps_telegram_bot.minecraft_handlers import (
     _backup_button_label,
+    _build_admin_mods_completion_text,
     _manual_slot_labels,
     _mcops_level_seed_unsupported_hint,
+    _mods_mcops_highlights,
     _run_admin_mods_command_with_progress,
+    _shrink_text_for_telegram_inline,
     _world_reset_argv_for_telegram,
     admin_menu_markup,
     admin_world_regen_ultra_markup,
     minecraft_menu_markup,
 )
+from vps_telegram_bot.telegram_inline_kb import pad_message_for_inline_keyboard
 
 
 def test_manual_slot_labels_show_occupied_and_empty_slots() -> None:
@@ -174,6 +178,38 @@ def test_mcops_level_seed_unsupported_hint_detects_argparse() -> None:
     err = "cli.py: error: unrecognized arguments: --level-seed 123"
     assert "mcops" in _mcops_level_seed_unsupported_hint(err).lower()
     assert _mcops_level_seed_unsupported_hint("ok") == ""
+
+
+def test_mods_mcops_highlights_picks_jar_and_download_lines() -> None:
+    blob = (
+        "noise line\n"
+        "Downloading fabric-api-1.0.jar from Modrinth\n"
+        "another noise\n"
+        "replaced old-mod.jar -> new-mod.jar\n"
+    )
+    lines = _mods_mcops_highlights(blob)
+    assert any(".jar" in ln for ln in lines)
+    assert any("Downloading" in ln for ln in lines)
+
+
+def test_build_admin_mods_completion_text_includes_success_heading() -> None:
+    text = _build_admin_mods_completion_text(
+        0,
+        "OK\ninstalled foo.jar\n",
+        failure_prefix="mods apply",
+        elapsed_sec=82,
+    )
+    assert "успешно" in text.lower()
+    assert "82" in text
+    assert "foo.jar" in text
+
+
+def test_shrink_text_for_telegram_inline_truncates_long_body() -> None:
+    mk = admin_menu_markup()
+    huge = "x" * 6000
+    clipped = _shrink_text_for_telegram_inline(huge, mk, hard_max=4096)
+    padded = pad_message_for_inline_keyboard(clipped, mk)
+    assert len(padded) <= 4096
 
 
 @pytest.mark.asyncio

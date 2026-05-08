@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -97,6 +98,203 @@ def tail_command_text(text: str, *, max_len: int) -> str:
     """Обрезка длинного вывода команд для сообщений Telegram."""
 
     return _tail_text(text, max_len=max_len)
+
+
+_TELEGRAM_MESSAGE_BODY_MAX = 4096
+
+_MODS_MCOPS_HIGHLIGHT_KEYWORDS: tuple[str, ...] = (
+    ".jar",
+    "modrinth",
+    "curseforge",
+    "download",
+    "install",
+    "replace",
+    "updated",
+    "update ",
+    "→",
+    "->",
+    "applied",
+    "примен",
+    "скач",
+    "mods/",
+    "mods\\",
+)
+
+
+def _admin_mods_completion_headings(failure_prefix: str) -> tuple[str, str]:
+    """Заголовки успеха и ошибки для ``mods plan`` / ``mods apply``."""
+
+    low = failure_prefix.lower()
+    if "apply" in low:
+        return (
+            "Обновление модов завершено успешно.",
+            "Обновление модов завершилось с ошибкой.",
+        )
+    return (
+        "Проверка обновлений модов завершена.",
+        "Проверка обновлений модов завершилась с ошибкой.",
+    )
+
+
+def _mods_mcops_highlights(blob: str, *, max_lines: int = 28, max_line_len: int = 200) -> list[str]:
+    """Вытащить из stdout/stderr mcops строки, похожие на скачивание или замену JAR."""
+
+    picked: list[str] = []
+    seen: set[str] = set()
+    for raw in blob.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        low = stripped.lower()
+        if not any(key in low for key in _MODS_MCOPS_HIGHLIGHT_KEYWORDS):
+            continue
+        if stripped in seen:
+            continue
+        seen.add(stripped)
+        if len(stripped) > max_line_len:
+            line = stripped[: max_line_len - 3] + "..."
+        else:
+            line = stripped
+        picked.append(line)
+        if len(picked) >= max_lines:
+            break
+    return picked
+
+
+def _build_admin_mods_completion_text(
+    code: int,
+    blob: str,
+    *,
+    failure_prefix: str,
+    elapsed_sec: int,
+) -> str:
+    """Собрать итоговый текст для Telegram после ``mods plan`` / ``mods apply``."""
+
+    ok_head, err_head = _admin_mods_completion_headings(failure_prefix)
+    lines: list[str]
+    if code == 0:
+        lines = [
+            ok_head,
+            f"Время выполнения: около {elapsed_sec} сек.",
+            "",
+        ]
+    else:
+        lines = [
+            f"{err_head} Код выхода: {code}.",
+            f"Время до завершения команды: около {elapsed_sec} сек.",
+            f"Команда (контекст): {failure_prefix}.",
+            "",
+        ]
+    highlights = _mods_mcops_highlights(blob)
+    if highlights:
+        lines.append("Что изменилось / ключевые строки вывода:")
+        lines.extend(highlights)
+        lines.append("")
+    elif blob.strip():
+        lines.append(
+            "(В выводе не нашлось явных строк про .jar или загрузку; смотрите хвост ниже.)"
+        )
+        lines.append("")
+    tail_max = 2600 if code == 0 else 2200
+    lines.append("Хвост вывода (stdout + stderr):")
+    lines.append(tail_command_text(blob, max_len=tail_max))
+    return "\n".join(lines)
+
+
+def _shrink_text_for_telegram_inline(
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+    *,
+    hard_max: int = _TELEGRAM_MESSAGE_BODY_MAX,
+) -> str:
+    """Укоротить текст так, чтобы тело сообщения с padding для inline не превышало ``hard_max``."""
+
+    notice = "\n\n(Текст обрезан: лимит Telegram 4096 символов.)"
+    candidate = text
+    for _ in range(80):
+        body = (
+            pad_message_for_inline_keyboard(candidate, markup)
+            if markup is not None
+            else candidate
+        )
+        if len(body) <= hard_max:
+            return candidate
+        if len(candidate) < 80:
+            raw = candidate + notice
+            body2 = (
+                pad_message_for_inline_keyboard(raw, markup)
+                if markup is not None
+                else raw
+            )
+            if len(body2) <= hard_max:
+                return raw
+            return raw[: max(1, hard_max - 40)]
+        chop = max(len(candidate) // 8, 120)
+        candidate = candidate[:-chop].rstrip()
+    raw = candidate + notice
+    body3 = pad_message_for_inline_keyboard(raw, markup) if markup is not None else raw
+    if len(body3) <= hard_max:
+        return raw
+    return raw[: max(1, hard_max - 40)]
+
+
+async def _try_bot_edit_callback_message(
+    q: CallbackQuery,
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+) -> bool:
+    """Повторить ``edit_message_text`` через ``Bot``, если прямой вызов на query не сработал."""
+
+    msg = q.message
+    if msg is None:
+        return False
+    getter = getattr(q, "get_bot", None)
+    if not callable(getter):
+        return False
+    try:
+        bot = getter()
+        body = pad_message_for_inline_keyboard(text, markup)
+        await bot.edit_message_text(
+            chat_id=msg.chat_id,
+            message_id=msg.message_id,
+            text=body,
+            reply_markup=markup,
+        )
+    except TelegramError:
+        log.warning("bot.edit_message_text for mods/mcops result failed", exc_info=True)
+        return False
+    return True
+
+
+async def _deliver_admin_mods_result(
+    q: CallbackQuery,
+    text: str,
+    markup: InlineKeyboardMarkup,
+) -> None:
+    """Отправить итог: правка сообщения, запасной путь через Bot, затем ответ в чат."""
+
+    clipped = _shrink_text_for_telegram_inline(text, markup, hard_max=_TELEGRAM_MESSAGE_BODY_MAX)
+    if await _safe_edit_callback_message(q, clipped, reply_markup=markup):
+        return
+    if await _try_bot_edit_callback_message(q, clipped, markup):
+        return
+    msg = q.message
+    if msg is None:
+        return
+    fallback = await _safe_reply_message_with_inline_kb(msg, clipped, markup)
+    if fallback is not None:
+        return
+    ultra = _shrink_text_for_telegram_inline(
+        (
+            "Не удалось обновить исходное сообщение в Telegram (сеть или лимит). "
+            "Операция на сервере уже завершена — откройте «Админская чепуха» снова.\n\n"
+            f"{clipped}"
+        ),
+        markup,
+        hard_max=_TELEGRAM_MESSAGE_BODY_MAX,
+    )
+    await _safe_reply_message_with_inline_kb(msg, ultra, markup)
 
 
 def minecraft_menu_markup() -> InlineKeyboardMarkup:
@@ -319,27 +517,27 @@ async def _run_admin_mods_command_with_progress(
 ) -> None:
     """Run a long ``mcops mods`` command and keep the Telegram message alive."""
 
+    started = time.monotonic()
     await _safe_edit_callback_message(q, start_text)
     task = asyncio.create_task(run_remote_mcops(remote, argv))
-    elapsed = 0
     while not task.done():
         await asyncio.sleep(10.0)
-        elapsed += 10
+        elapsed = int(time.monotonic() - started)
         await _safe_edit_callback_message(
             q,
             f"{progress_text}\nПрошло: {elapsed} сек.",
         )
     code, out, err = await task
     blob = (out + "\n" + err).strip()
-    text = (
-        _tail_text(blob, max_len=3500)
-        if code == 0
-        else f"{failure_prefix}: код {code}\n{_tail_text(blob, max_len=3200)}"
+    elapsed_final = int(time.monotonic() - started)
+    text = _build_admin_mods_completion_text(
+        code,
+        blob,
+        failure_prefix=failure_prefix,
+        elapsed_sec=elapsed_final,
     )
     adm_mk = admin_menu_markup()
-    edited = await _safe_edit_callback_message(q, text, reply_markup=adm_mk)
-    if not edited and q.message is not None:
-        await _safe_reply_message_with_inline_kb(q.message, text, adm_mk)
+    await _deliver_admin_mods_result(q, text, adm_mk)
 
 
 def _mcops_level_seed_unsupported_hint(blob: str) -> str:
